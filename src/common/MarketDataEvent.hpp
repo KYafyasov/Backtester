@@ -1,6 +1,6 @@
 #pragma once
 
-#include "common/BasicTypes.hpp"
+#include "types/BasicTypes.hpp"
 #include <limits>
 
 namespace cmf
