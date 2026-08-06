@@ -17,6 +17,7 @@ The `back-tester-tests` executable covers:
 - rejects, order transitions, positions, exact PnL, buffer ownership, and
   deterministic repeated runs;
 - complete runtime composition from a temporary JSONL source.
+- atomic L2 snapshot replacement and rejection of invalid/mixed L2/L3 state.
 
 CTest also verifies CLI usage and valid/invalid checked-in fixtures.
 
@@ -32,6 +33,8 @@ CTest also verifies CLI usage and valid/invalid checked-in fixtures.
 - the real two-instrument end-to-end strategy;
 - deterministic repeated results;
 - benchmark output contracts.
+- exact CSV conversion, typed Parquet/cache/manifest output, unverified
+  metadata rejection, and public L2 replay callbacks/fills.
 
 ### Sanitizers
 

@@ -2,6 +2,7 @@
 
 #include "market/HistoricalLOBStore.hpp"
 #include "market/JsonlReader.hpp"
+#include "market/L2CacheReader.hpp"
 #include "scheduler/SchedulerRuntime.hpp"
 #include "trading/TradingEngine.hpp"
 
@@ -158,13 +159,8 @@ public:
             event.price_ticks,
         });
       } else {
-        const auto *intermediate_book = books_.find(event.instrument_id);
-        if (intermediate_book == nullptr) {
-          throw std::logic_error(
-              "historical store lost intermediate instrument");
-        }
-        const auto best_bid = intermediate_book->best_bid();
-        const auto best_ask = intermediate_book->best_ask();
+        const auto best_bid = books_.best_bid(event.instrument_id);
+        const auto best_ask = books_.best_ask(event.instrument_id);
         price_cross_signals_.push_back(PriceCrossSignal{
             event.instrument_id,
             event.exchange_ts_ns,
@@ -181,12 +177,8 @@ public:
     }
 
     const InstrumentId instrument_id = staged->instrument_id;
-    const auto *book = books_.find(instrument_id);
-    if (book == nullptr) {
-      throw std::logic_error("historical store lost applied instrument");
-    }
-    book->write_top_bids(config_.book_depth, bids_);
-    book->write_top_asks(config_.book_depth, asks_);
+    books_.write_top_bids(instrument_id, config_.book_depth, bids_);
+    books_.write_top_asks(instrument_id, config_.book_depth, asks_);
 
     auto &previous = cached_depth(instrument_id);
     const bool changed = !equal_levels(previous.bids, bids_) ||
@@ -230,13 +222,9 @@ private:
   }
 
   void seed_depth_cache(InstrumentId instrument_id) {
-    const auto *book = books_.find(instrument_id);
-    if (book == nullptr) {
-      throw std::logic_error("historical store lost warmup instrument");
-    }
     auto &cached = cached_depth(instrument_id);
-    book->write_top_bids(config_.book_depth, cached.bids);
-    book->write_top_asks(config_.book_depth, cached.asks);
+    books_.write_top_bids(instrument_id, config_.book_depth, cached.bids);
+    books_.write_top_asks(instrument_id, config_.book_depth, cached.asks);
   }
 
   std::string path_;
@@ -251,6 +239,142 @@ private:
   std::vector<TradeView> trades_;
   std::vector<PriceCrossSignal> price_cross_signals_;
   bool group_staged_{};
+};
+
+class L2CacheScheduledSource {
+public:
+  L2CacheScheduledSource(std::string manifest_path,
+                         market::L2CacheReader::InstrumentMap instruments,
+                         market::HistoricalLOBStore &books, DateRange range,
+                         BacktestConfig config)
+      : reader_(std::move(manifest_path), std::move(instruments), range),
+        books_(books), range_(range), config_(config) {
+    bids_.reserve(config.book_depth);
+    asks_.reserve(config.book_depth);
+    trades_.reserve(1);
+    signals_.reserve(1);
+  }
+
+  bool next(ScheduledEvent &scheduled) {
+    if (staged_) {
+      throw std::logic_error("L2 source advanced before staged dispatch");
+    }
+    bids_.clear();
+    asks_.clear();
+    trades_.clear();
+    signals_.clear();
+    for (;;) {
+      if (!reader_.next(event_)) {
+        return false;
+      }
+      if (event_.event_ts_ns < range_.start_ts_ns) {
+        if (event_.kind == market::L2EventKind::Snapshot) {
+          books_.replace_snapshot(event_.instrument_id, event_.bids,
+                                  event_.asks, event_.merged_sequence);
+          seed_depth_cache();
+        }
+        continue;
+      }
+      if (event_.event_ts_ns > range_.end_ts_ns) {
+        return false;
+      }
+      const auto engine_time = checked_delivery_time(
+          event_.event_ts_ns, config_.market_data_latency_ns);
+      staged_ = true;
+      scheduled = ScheduledEvent{MarketDelivery{event_.instrument_id,
+                                                event_.event_ts_ns,
+                                                engine_time,
+                                                event_.merged_sequence,
+                                                std::nullopt,
+                                                {},
+                                                {}}};
+      return true;
+    }
+  }
+
+  void prepare_for_dispatch(ScheduledEvent &scheduled) {
+    if (!staged_) {
+      throw std::logic_error("L2 source has no staged event");
+    }
+    const auto *delivery = std::get_if<MarketDelivery>(&scheduled.payload());
+    if (delivery == nullptr ||
+        delivery->instrument_id != event_.instrument_id ||
+        delivery->exchange_ts_ns != event_.event_ts_ns ||
+        delivery->source_sequence != event_.merged_sequence) {
+      throw std::logic_error(
+          "scheduled delivery does not match staged L2 event");
+    }
+
+    std::optional<BookUpdateView> book_update;
+    if (event_.kind == market::L2EventKind::Snapshot) {
+      books_.replace_snapshot(event_.instrument_id, event_.bids, event_.asks,
+                              event_.merged_sequence);
+      books_.write_top_bids(event_.instrument_id, config_.book_depth, bids_);
+      books_.write_top_asks(event_.instrument_id, config_.book_depth, asks_);
+      auto &previous = cached_depth();
+      if (!equal_levels(previous.bids, bids_) ||
+          !equal_levels(previous.asks, asks_)) {
+        previous.bids.assign(bids_.begin(), bids_.end());
+        previous.asks.assign(asks_.begin(), asks_.end());
+        book_update.emplace(BookUpdateView{
+            event_.instrument_id, event_.event_ts_ns, delivery->engine_ts_ns,
+            event_.merged_sequence, true, bids_, asks_});
+      }
+      const auto bid = books_.best_bid(event_.instrument_id);
+      const auto ask = books_.best_ask(event_.instrument_id);
+      signals_.push_back(PriceCrossSignal{
+          event_.instrument_id, event_.event_ts_ns, delivery->engine_ts_ns,
+          event_.merged_sequence, PriceCrossSource::BestQuote,
+          bid.has_value() ? std::optional<PriceTicks>{bid->price}
+                          : std::nullopt,
+          ask.has_value() ? std::optional<PriceTicks>{ask->price}
+                          : std::nullopt,
+          std::nullopt});
+    } else {
+      trades_.push_back(TradeView{event_.instrument_id, event_.event_ts_ns,
+                                  delivery->engine_ts_ns,
+                                  event_.merged_sequence, event_.side,
+                                  event_.trade_price, event_.trade_quantity});
+      signals_.push_back(PriceCrossSignal{
+          event_.instrument_id, event_.event_ts_ns, delivery->engine_ts_ns,
+          event_.merged_sequence, PriceCrossSource::Trade, std::nullopt,
+          std::nullopt, event_.trade_price});
+    }
+
+    scheduled = ScheduledEvent{MarketDelivery{
+        event_.instrument_id, event_.event_ts_ns, delivery->engine_ts_ns,
+        event_.merged_sequence, book_update, trades_, signals_}};
+    staged_ = false;
+  }
+
+private:
+  CachedDepth &cached_depth() {
+    auto [iterator, inserted] =
+        previous_depth_.try_emplace(event_.instrument_id, CachedDepth{});
+    if (inserted) {
+      iterator->second.bids.reserve(config_.book_depth);
+      iterator->second.asks.reserve(config_.book_depth);
+    }
+    return iterator->second;
+  }
+
+  void seed_depth_cache() {
+    auto &cache = cached_depth();
+    books_.write_top_bids(event_.instrument_id, config_.book_depth, cache.bids);
+    books_.write_top_asks(event_.instrument_id, config_.book_depth, cache.asks);
+  }
+
+  market::L2CacheReader reader_;
+  market::HistoricalLOBStore &books_;
+  DateRange range_;
+  BacktestConfig config_;
+  market::L2InputEvent event_;
+  std::unordered_map<InstrumentId, CachedDepth> previous_depth_;
+  std::vector<BookLevel> bids_;
+  std::vector<BookLevel> asks_;
+  std::vector<TradeView> trades_;
+  std::vector<PriceCrossSignal> signals_;
+  bool staged_{};
 };
 
 void validate(DateRange range, BacktestConfig config,
@@ -279,10 +403,35 @@ void validate(DateRange range, BacktestConfig config,
   }
 }
 
+template <typename Source>
+void execute_source(Source &source, trading::TradingEngine &engine,
+                    market::HistoricalLOBStore &books,
+                    results::ResultRecorder &recorder, DateRange range) {
+  scheduler::SchedulerRuntime scheduler(
+      scheduler::SchedulerRuntimeConfig{range, 1, 64, 4096});
+  scheduler.run(source, [&](const ScheduledEvent &event,
+                            scheduler::CommandSink &commands) {
+    engine(event, commands);
+    const auto *delivery = std::get_if<MarketDelivery>(&event.payload());
+    if (delivery == nullptr || !delivery->book_update.has_value()) {
+      return;
+    }
+    const auto bid = books.best_bid(delivery->instrument_id);
+    const auto ask = books.best_ask(delivery->instrument_id);
+    recorder.on_book_mark(
+        delivery->instrument_id, delivery->engine_ts_ns,
+        bid.has_value() ? std::optional<PriceTicks>{bid->price} : std::nullopt,
+        ask.has_value() ? std::optional<PriceTicks>{ask->price} : std::nullopt);
+  });
+}
+
 } // namespace
 
 std::vector<InstrumentMeta>
 discover_databento_instruments(const std::string &data_path) {
+  if (market::L2CacheReader::is_l2_manifest(data_path)) {
+    return {market::L2CacheReader::discover_instrument(data_path)};
+  }
   market::JsonlReader reader(data_path,
                              market::JsonlReader::databento_nanounit_policy());
   std::unordered_set<InstrumentId> unique_ids;
@@ -323,25 +472,15 @@ results::FrozenResults run_backtest(trading::Strategy &strategy,
   results::ResultRecorder recorder(
       instruments, results::ResultReserveEstimate{64, 128, 128, 16});
   trading::TradingEngine engine(instruments, config, books, strategy, recorder);
-  JsonlScheduledSource source(data_path, std::move(metadata), books, date_range,
-                              config);
-  scheduler::SchedulerRuntime scheduler(
-      scheduler::SchedulerRuntimeConfig{date_range, 1, 64, 4096});
-  scheduler.run(source, [&](const ScheduledEvent &event,
-                            scheduler::CommandSink &commands) {
-    engine(event, commands);
-    const auto *delivery = std::get_if<MarketDelivery>(&event.payload());
-    if (delivery == nullptr || !delivery->book_update.has_value()) {
-      return;
-    }
-    const auto *book = books.find(delivery->instrument_id);
-    const auto bid = book->best_bid();
-    const auto ask = book->best_ask();
-    recorder.on_book_mark(
-        delivery->instrument_id, delivery->engine_ts_ns,
-        bid.has_value() ? std::optional<PriceTicks>{bid->price} : std::nullopt,
-        ask.has_value() ? std::optional<PriceTicks>{ask->price} : std::nullopt);
-  });
+  if (market::L2CacheReader::is_l2_manifest(data_path)) {
+    L2CacheScheduledSource source(data_path, std::move(metadata), books,
+                                  date_range, config);
+    execute_source(source, engine, books, recorder, date_range);
+  } else {
+    JsonlScheduledSource source(data_path, std::move(metadata), books,
+                                date_range, config);
+    execute_source(source, engine, books, recorder, date_range);
+  }
   return recorder.freeze();
 }
 

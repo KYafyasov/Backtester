@@ -2,6 +2,7 @@
 
 #include "core/BacktestConfig.hpp"
 #include "core/Events.hpp"
+#include "market/HistoricalLOBStore.hpp"
 #include "market/LimitOrderBook.hpp"
 
 #include <map>
@@ -81,6 +82,12 @@ public:
          Sequence arrival_sequence, const market::LimitOrderBook *book);
 
   [[nodiscard]] std::span<const SyntheticFill>
+  accept_from_store(ClOrdId client_order_id, InstrumentId instrument_id,
+                    Side side, PriceTicks limit_price,
+                    Quantity remaining_quantity, Sequence arrival_sequence,
+                    const market::HistoricalLOBStore *books);
+
+  [[nodiscard]] std::span<const SyntheticFill>
   on_signal(const PriceCrossSignal &signal);
 
   void cancel(ClOrdId client_order_id);
@@ -95,6 +102,11 @@ private:
                     Sequence trigger_source_sequence);
   void insert_resting(const EngineView::PrivateOrder &order);
   void erase_resting(const EngineView::PrivateOrder &order);
+  [[nodiscard]] std::span<const SyntheticFill> accept_with_touch(
+      ClOrdId client_order_id, InstrumentId instrument_id, Side side,
+      PriceTicks limit_price, Quantity remaining_quantity,
+      Sequence arrival_sequence, std::optional<PriceTicks> best_bid,
+      std::optional<PriceTicks> best_ask, Sequence source_sequence);
 
   EngineView view_;
   std::vector<SyntheticFill> fills_;

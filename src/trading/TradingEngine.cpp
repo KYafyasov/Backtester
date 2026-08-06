@@ -268,15 +268,14 @@ void TradingEngine::process_new(const NewOrderCommand &command) {
     return;
   }
 
-  const auto *book = books_.find(command.instrument_id);
   order.query.exchange_arrival_sequence = command.command_sequence;
   order.query.state = OrderState::Open;
   emit_order_event(order, OrderLogEventType::Accepted);
-  apply_fills(simulated_lob_.accept(
+  apply_fills(simulated_lob_.accept_from_store(
                   order.query.client_order_id, order.query.instrument_id,
                   order.query.side, order.query.limit_price_ticks,
                   order.query.remaining_quantity,
-                  order.query.exchange_arrival_sequence, book),
+                  order.query.exchange_arrival_sequence, &books_),
               command.scheduled_arrival_ts_ns);
 }
 

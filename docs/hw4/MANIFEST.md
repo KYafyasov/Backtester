@@ -1,6 +1,6 @@
 # Documentation manifest
 
-Homework 4 contains 18 Markdown files, including this manifest.
+Homework 4 contains 22 Markdown files, including this manifest.
 
 ## Entry points
 
@@ -29,3 +29,16 @@ Homework 4 contains 18 Markdown files, including this manifest.
 - [`source/README.md`](source/README.md)
 - [`source/01_homework_4_assignment.md`](source/01_homework_4_assignment.md)
 - [`source/02_original_big_picture_mermaid.md`](source/02_original_big_picture_mermaid.md)
+
+## Proposals
+
+- [`proposals/01_price_cross_full_fill_traceability.md`](proposals/01_price_cross_full_fill_traceability.md)
+- [`proposals/02_l2_parquet_data_pipeline.md`](proposals/02_l2_parquet_data_pipeline.md)
+
+## Reviews
+
+- [`reviews/01_screenshot_module_code_traceability.md`](reviews/01_screenshot_module_code_traceability.md)
+
+## Tasks
+
+- [`tasks/01_l2_pipeline_implementation.md`](tasks/01_l2_pipeline_implementation.md)

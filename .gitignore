@@ -287,3 +287,5 @@ __marimo__/
 # Ignore all local history of files
 .history
 .ionide
+/data_trades/
+/data_normalized/

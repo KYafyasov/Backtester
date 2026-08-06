@@ -15,9 +15,12 @@ It is a backtester, not an exchange emulator or a complete options risk system.
 - One OS process.
 - One dispatcher thread and one trading-engine consumer thread.
 - Multiple instruments in one replay.
-- Databento-like MBO JSONL input.
+- Databento-like MBO JSONL input, plus manifest-selected L2 replay caches
+  generated beside canonical daily Parquet partitions.
 - Streaming, fail-fast parsing into numeric native types.
 - A per-instrument historical L3 book.
+- A separate aggregated L2 snapshot book; one run never mixes L2 and L3 state
+  for an instrument.
 - One private `EngineView` owned by the typed `SimulatedLOB`.
 - Fixed market-data latency and strictly positive fixed order latency.
 - Limit GTC orders, full fills on price cross, resting orders, and cancel.
@@ -136,6 +139,8 @@ is not produced by the full-fill-on-cross matcher.
 - No self-matching between private strategy orders.
 - No exercise, assignment, expiration settlement, Greeks, volatility surface,
   or complete options risk engine.
-- No Feather input, database, persistence layer, UI, or generic plugin system.
+- No direct Feather input, database, UI, or generic plugin system. Parquet is
+  produced offline for typed local persistence; runtime reads the versioned
+  native cache referenced by its manifest.
 - The shipped runtime has one trading `EngineView`; isolation between typed
   `SimulatedLOB` instances is tested but is not exposed by `backtest.run()`.

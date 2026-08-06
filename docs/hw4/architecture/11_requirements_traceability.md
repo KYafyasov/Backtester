@@ -50,7 +50,7 @@ component, represented at the boundary, or intentionally outside scope.
 | Diagram box or flow | Final implementation disposition | Code / evidence |
 |---|---|---|
 | Databento JSON data source | Implemented as streaming Databento-like MBO JSONL | `src/market/JsonlReader.*`, `test/data/*.jsonl` |
-| Feather data source | Not implemented; the runtime input contract is JSONL | architecture scope/limitations |
+| Feather data source | Feather remains unsupported; local L2 CSV now converts to canonical Parquet plus a native runtime cache | `scripts/convert_l2_csv.py`, `src/market/L2CacheReader.*` |
 | Event Merger | One prefetched market source is dynamically merged with delayed strategy commands | `src/scheduler/SchedulerRuntime.hpp` |
 | Chronological Dispatcher | Implemented with stable key `(scheduled time, priority, sequence)` | `ChronologicalScheduler.*`, scheduler ordering tests |
 | Map of LOBs per instrument | Implemented by `HistoricalLOBStore` | `src/market/HistoricalLOBStore.*` |

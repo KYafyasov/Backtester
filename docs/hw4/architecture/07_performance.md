@@ -11,6 +11,9 @@ then removes avoidable allocation and conversion from the event path.
   values.
 - The reader streams physical rows and stages one atomic group; it does not
   load and sort the full file.
+- The offline L2 converter parses CSV in bounded batches, writes Zstandard
+  Parquet plus a compact little-endian replay cache, and records conversion
+  throughput in the manifest. Runtime decodes only numeric cache records.
 - Matching compares typed quote/trade trigger prices against the best eligible
   private order and does not traverse historical displayed volume.
 - Resting private orders use price-time ordered maps.
@@ -82,6 +85,19 @@ region.
 
 The totals are unadjusted. A side-effect-free native empty loop is not
 subtracted because an optimizing Release compiler can eliminate it.
+
+## L2 conversion and replay benchmark
+
+Every conversion writes rows, elapsed time, rows/s, and input/output bytes to
+`manifest.json`. End-to-end replay is measured with:
+
+```bash
+uv run python scripts/benchmark_l2_replay.py \
+  data_normalized/l2_parquet/manifest.json
+```
+
+This includes cache decoding, scheduling, historical snapshot replacement,
+callbacks to a no-op Python strategy, acknowledgements, and result freezing.
 
 ## Interpreting results
 

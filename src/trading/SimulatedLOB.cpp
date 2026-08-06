@@ -36,6 +36,39 @@ SimulatedLOB::accept(ClOrdId client_order_id, InstrumentId instrument_id,
                      Side side, PriceTicks limit_price,
                      Quantity remaining_quantity, Sequence arrival_sequence,
                      const market::LimitOrderBook *book) {
+  return accept_with_touch(
+      client_order_id, instrument_id, side, limit_price, remaining_quantity,
+      arrival_sequence,
+      book == nullptr || !book->best_bid().has_value()
+          ? std::nullopt
+          : std::optional<PriceTicks>{book->best_bid()->price},
+      book == nullptr || !book->best_ask().has_value()
+          ? std::nullopt
+          : std::optional<PriceTicks>{book->best_ask()->price},
+      book == nullptr ? 0 : book->last_book_source_sequence());
+}
+
+std::span<const SyntheticFill> SimulatedLOB::accept_from_store(
+    ClOrdId client_order_id, InstrumentId instrument_id, Side side,
+    PriceTicks limit_price, Quantity remaining_quantity,
+    Sequence arrival_sequence, const market::HistoricalLOBStore *books) {
+  const auto bid =
+      books == nullptr ? std::nullopt : books->best_bid(instrument_id);
+  const auto ask =
+      books == nullptr ? std::nullopt : books->best_ask(instrument_id);
+  return accept_with_touch(
+      client_order_id, instrument_id, side, limit_price, remaining_quantity,
+      arrival_sequence,
+      bid.has_value() ? std::optional<PriceTicks>{bid->price} : std::nullopt,
+      ask.has_value() ? std::optional<PriceTicks>{ask->price} : std::nullopt,
+      books == nullptr ? 0 : books->last_book_source_sequence(instrument_id));
+}
+
+std::span<const SyntheticFill> SimulatedLOB::accept_with_touch(
+    ClOrdId client_order_id, InstrumentId instrument_id, Side side,
+    PriceTicks limit_price, Quantity remaining_quantity,
+    Sequence arrival_sequence, std::optional<PriceTicks> best_bid,
+    std::optional<PriceTicks> best_ask, Sequence source_sequence) {
   fills_.clear();
   if (view_.resting_.find(instrument_id) == view_.resting_.end()) {
     throw SimulatedLOBError("accepted order references unknown instrument");
@@ -49,16 +82,9 @@ SimulatedLOB::accept(ClOrdId client_order_id, InstrumentId instrument_id,
     throw SimulatedLOBError("duplicate private order");
   }
   insert_resting(iterator->second);
-  if (book != nullptr) {
-    const auto best_bid = book->best_bid();
-    const auto best_ask = book->best_ask();
-    match_prices(
-        instrument_id,
-        best_ask.has_value() ? std::optional<PriceTicks>{best_ask->price}
-                             : std::nullopt,
-        best_bid.has_value() ? std::optional<PriceTicks>{best_bid->price}
-                             : std::nullopt,
-        LiquiditySource::QuoteCross, book->last_book_source_sequence());
+  if (best_bid.has_value() || best_ask.has_value()) {
+    match_prices(instrument_id, best_ask, best_bid, LiquiditySource::QuoteCross,
+                 source_sequence);
   }
   return fills_;
 }

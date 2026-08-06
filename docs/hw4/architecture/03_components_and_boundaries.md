@@ -36,7 +36,7 @@ they are not separate libraries.
 
 ```mermaid
 flowchart TB
-    DATA[("MBO JSONL")]
+    DATA[("MBO JSONL or L2 manifest/cache")]
 
     subgraph PYTHON["Python boundary"]
         direction LR
@@ -52,7 +52,7 @@ flowchart TB
 
     subgraph DISPATCHER["Dispatcher thread"]
         direction LR
-        READER["JsonlReader<br/>parse once"]
+        READER["JsonlReader / L2CacheReader<br/>decode once"]
         SOURCE["Scheduled source<br/>atomic groups"]
         BOOKS[("HistoricalLOBStore<br/>single writer")]
         SCHED["Scheduler<br/>stable timeline"]
@@ -109,7 +109,7 @@ ordering within the market-delivery and order/cancel paths.
 ```text
 src/
   core/        dependency-free public contracts
-  market/      typed JSONL ingestion and historical L3 books
+  market/      typed JSONL/L2-cache ingestion and historical L3/L2 books
   scheduler/   event ordering, SPSC queues, ready barrier, thread runtime
   trading/     private orders, matching, callbacks, positions
   results/     columnar result storage and PnL
@@ -146,10 +146,14 @@ or matching logic.
 Owns input parsing and shared historical state:
 
 - `JsonlReader` streams and validates physical JSONL rows.
+- `L2CacheReader` validates the dataset manifest, cache headers, metadata,
+  record boundaries, and global chronology.
 - `Parsing` converts timestamps and decimal prices once into native integers.
 - `LimitOrderBook` reconstructs per-instrument L3 state and exposes ordered
   historical slices and top-N aggregated levels.
 - `HistoricalLOBStore` routes events to one book per instrument.
+- `HistoricalL2Book` atomically replaces ordered aggregated snapshot levels;
+  it has no exchange order IDs or L3 liquidity surface.
 
 Malformed rows, unsupported values, source chronology regression, and corrupt
 L3 actions raise typed errors. The reader does not load or sort the full replay.
@@ -191,7 +195,8 @@ It creates no pandas or Python objects in the native event loop.
 
 ### `src/runtime`
 
-`run_backtest()` validates configuration and instrument metadata, constructs
+`run_backtest()` validates configuration and instrument metadata, detects an
+L2 dataset manifest or the compatible JSONL path, constructs
 the books, recorder, trading engine, streaming scheduled source, and scheduler,
 then freezes results after the threads join.
 

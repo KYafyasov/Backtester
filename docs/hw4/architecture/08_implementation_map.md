@@ -9,6 +9,7 @@ This page is a code-reading index for the implemented system.
 | Public Python entry point | `python/back_tester/__init__.py`, `src/python/bindings.cpp` | `python/tests/test_runtime.py`, `python/tests/test_end_to_end.py` |
 | Runtime composition | `src/runtime/BacktestRuntime.cpp` | `test/RuntimeTest.cpp` |
 | Streaming JSONL source | `src/market/JsonlReader.*`, runtime `JsonlScheduledSource` | `test/CoreMarketTest.cpp`, `test/RuntimeTest.cpp` |
+| L2 conversion and replay | `scripts/convert_l2_csv.py`, `src/market/L2CacheReader.*`, `HistoricalL2Book.*`, runtime `L2CacheScheduledSource` | `python/tests/test_l2_pipeline.py`, L2 cases in `test/CoreMarketTest.cpp` |
 | Historical L3 state | `src/market/LimitOrderBook.*`, `HistoricalLOBStore.*` | `test/CoreMarketTest.cpp` |
 | Scheduled ordering | `src/scheduler/ChronologicalScheduler.*` | `test/SchedulerTest.cpp` |
 | Threading and queues | `SchedulerRuntime.hpp`, `SpscRing.hpp`, `ReadyBarrier.hpp` | `test/SchedulerTest.cpp` |
@@ -46,6 +47,14 @@ JsonlReader
   -> ResultRecorder appends typed columns
   -> TradingEngine invokes Python through PythonStrategyAdapter
   -> ReadyBarrier acknowledges completion
+```
+
+The L2 alternative replaces the first four lines with:
+
+```text
+convert_l2_csv.py -> daily Parquet + replay.l2cache + manifest.json
+L2CacheReader -> L2CacheScheduledSource::prepare_for_dispatch()
+  -> HistoricalL2Book::replace_snapshot() or one typed TradeView
 ```
 
 ## Command path

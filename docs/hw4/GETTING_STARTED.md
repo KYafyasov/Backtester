@@ -184,7 +184,13 @@ All metadata values must be positive, instrument IDs must be unique, and every
 instrument in the input must have metadata. Strategy prices are integer
 `price_ticks`, not floating-point currency values.
 
-## 6. Input data contract
+## 6. Input data contracts
+
+The path passed to `backtest.run()` may be an MBO JSONL file or an L2 dataset
+`manifest.json`. Both become the same typed scheduler/callback contract; they
+retain different market semantics.
+
+### MBO JSONL
 
 The runtime reads one JSON object per line in Databento-like MBO order. The
 checked-in [`test/data/tiny_mbo.jsonl`](../../test/data/tiny_mbo.jsonl) fixture
@@ -207,6 +213,52 @@ timestamp or sequence regressions, incomplete atomic groups, unsupported
 values, unrepresentable prices, and unknown instruments fail the run with file
 and row context. The runtime does not silently sort or repair data.
 
+### Local L2 CSV to Parquet/cache
+
+Install the locked development dependencies, then convert the immutable raw
+files with explicit instrument and source metadata:
+
+```bash
+uv sync --locked
+uv run python scripts/convert_l2_csv.py \
+  data_trades data_normalized/l2_parquet \
+  --dataset-id DATASET_ID \
+  --instrument-id INSTRUMENT_ID \
+  --symbol SYMBOL \
+  --source-provider PROVIDER \
+  --venue VENUE \
+  --timestamp-unit us \
+  --timestamp-semantics exchange \
+  --price-scale PRICE_SCALE \
+  --tick-size-ticks TICK_SIZE_TICKS \
+  --contract-multiplier CONTRACT_MULTIPLIER \
+  --trade-side-semantics aggressor \
+  --same-timestamp-policy snapshot_first
+```
+
+The uppercase values and semantic choices are required facts, not defaults to
+copy blindly. If provenance is still unresolved, pass
+`--allow-unverified-metadata` together with `unknown` semantic values; the
+manifest is then explicitly diagnostic. The converter:
+
+- validates exact headers, ordering, timestamps, decimal scale, tick
+  alignment, quantities, depth, spread, and sides;
+- assigns one immutable merged sequence using the selected equal-time policy;
+- writes daily wide-schema Zstandard Parquet and a numeric native replay
+  cache in a temporary tree;
+- reopens and validates outputs, records hashes and throughput, and publishes
+  the final directory atomically.
+
+Run the normalized dataset without supplying duplicate metadata:
+
+```python
+result = backtest.run(strategy, "data_normalized/l2_parquet/manifest.json", DateRange())
+```
+
+An L2 snapshot is one atomic aggregated-book replacement and one final quote
+signal. It never fabricates order IDs, queue position, or add/cancel history.
+The current fill model is consequently an optimistic snapshot-based model.
+
 ## 7. Development workflow
 
 Run the repository checks before handing off a change:
@@ -226,7 +278,9 @@ For performance work, use the Release-only benchmarks:
 
 ```bash
 build-release/bin/test/back-tester-scheduler-benchmark
+build-release/bin/test/back-tester-price-cross-benchmark
 uv run python python/benchmarks/callback_overhead.py
+uv run python scripts/benchmark_l2_replay.py PATH_TO_MANIFEST
 ```
 
 Benchmark values are machine-specific observations, not pass/fail thresholds.
@@ -237,8 +291,9 @@ Benchmark values are machine-specific observations, not pass/fail thresholds.
   import verification from section 2.
 - C++ compiler not found: install a C++20 compiler and rerun the CMake
   configure command.
-- `cannot open source file`: pass a path relative to the repository root or an
-  absolute readable JSONL path.
+- `cannot open source file`: pass a readable JSONL path or L2 manifest path.
+- L2 manifest/cache mismatch: do not edit generated partitions; reconvert
+  from the immutable CSV source with the intended metadata.
 - Configuration validation error: check that market latency is non-negative
   and order latency, depth, instrument IDs, tick sizes, scales, and
   multipliers are positive.
