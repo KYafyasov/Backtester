@@ -1,6 +1,6 @@
 # Documentation manifest
 
-Homework 4 contains 22 Markdown files, including this manifest.
+Homework 4 contains 23 Markdown files, including this manifest.
 
 ## Entry points
 
@@ -38,6 +38,11 @@ Homework 4 contains 22 Markdown files, including this manifest.
 ## Reviews
 
 - [`reviews/01_screenshot_module_code_traceability.md`](reviews/01_screenshot_module_code_traceability.md)
+
+## Contracts
+
+- [`contracts/01_l2_python_pipeline_contract.md`](contracts/01_l2_python_pipeline_contract.md)
+- [`contracts/l2_dataset_manifest.schema.json`](contracts/l2_dataset_manifest.schema.json)
 
 ## Tasks
 
