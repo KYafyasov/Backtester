@@ -1,6 +1,6 @@
 // tests for BasicTypes
 
-#include "types/BasicTypes.hpp"
+#include "common/BasicTypes.hpp"
 
 #include "MiniTest.hpp"
 
