@@ -16,10 +16,17 @@ backtesting engine delivered for Homework 4.
 - [`architecture/12_l2_manifest_cache_validation.md`](architecture/12_l2_manifest_cache_validation.md)
   explains the implemented L2 manifest trust boundary, pre-thread cache-index
   reconciliation, range selection, hash checks, and diagnostic-data policy.
+- [`architecture/13_restricted_nway_event_merger.md`](architecture/13_restricted_nway_event_merger.md)
+  documents the implemented strict flat merge of disjoint L2 child datasets,
+  provenance fields, globally ordered selected warm-up, and ranged/full-replay
+  audit checks.
 - [`proposals/01_price_cross_full_fill_traceability.md`](proposals/01_price_cross_full_fill_traceability.md)
   traces the accepted and implemented trade-or-quote price-cross full-fill
   model from the repository baseline through the candidate code, tests,
   contracts, and benchmark evidence.
+- [`proposals/03_generic_nway_event_merger_plan.md`](proposals/03_generic_nway_event_merger_plan.md)
+  records the implementation plan and distinguishes the delivered restricted
+  flat merger from deferred hierarchy and overlapping-feed work.
 - [`source/01_homework_4_assignment.md`](source/01_homework_4_assignment.md) is
   the normalized assignment text.
 - [`source/02_original_big_picture_mermaid.md`](source/02_original_big_picture_mermaid.md)

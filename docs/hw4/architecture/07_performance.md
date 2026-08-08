@@ -11,6 +11,10 @@ then removes avoidable allocation and conversion from the event path.
   values.
 - The reader streams physical rows and stages one atomic group; it does not
   load and sort the full file.
+- The optional flat N-way merger retains one staged head per source and uses a
+  fixed-capacity binary heap. Selection and winner replacement are `O(log N)`;
+  head and heap capacity is reserved during initialization. A dedicated
+  allocation test is still required before claiming zero per-event allocation.
 - The offline L2 converter parses CSV in bounded batches, writes Zstandard
   Parquet plus a compact little-endian replay cache, and records conversion
   throughput in the manifest. Runtime decodes only numeric cache records.
@@ -30,6 +34,13 @@ ordered containers. Matching removes crossed private orders from the best price
 forward in deterministic price-time order. Custom allocators, SIMD, and custom
 trees are intentionally absent because the measured course-project workload
 does not justify their complexity.
+
+Multi-source startup intentionally pays strict validation cost before worker
+threads start: the parent manifest hash and size for every child are checked,
+then each child manifest performs its existing cache SHA/count/bounds preflight.
+This is integrity work outside the replay hot path. The current benchmark suite
+does not yet publish a dedicated scaling curve for 2/4/8/16 sources; add that
+measurement before claiming a performance advantage over offline pre-merge.
 
 ## Ready-signal round-trip benchmark
 

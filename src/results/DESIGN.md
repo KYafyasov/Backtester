@@ -56,11 +56,16 @@ alive, even after the recorder and engine are destroyed.
 same lifetime as the result columns, but it is not represented as a tabular
 vector.
 
-For manifest-backed L2 replay, the runtime copies the manifest identity and
-verification state into the recorder before the run starts. For JSONL input,
-the optional metadata remains empty because no dataset manifest established
-those facts. The Python `Result` consequently exposes the two L2 values and
-returns `None` for both properties on JSONL runs.
+For single or strict multi-source manifest-backed L2 replay, the runtime copies
+the manifest identity and verification state into the recorder before the run
+starts. For JSONL input, the optional metadata remains empty because no dataset
+manifest established those facts. The Python `Result` consequently exposes
+the two L2 values and returns `None` for both properties on JSONL runs.
+
+Fill columns preserve local and merged trigger provenance through
+`trigger_source_sequence`, `trigger_source_id`, and
+`trigger_global_market_sequence`. Legacy single-source fills retain zero in
+the two added multi-source fields.
 
 ## Native/Python ownership boundary
 

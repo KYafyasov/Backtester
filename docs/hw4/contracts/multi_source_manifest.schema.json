@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/cmf/multi_source_manifest.schema.json",
+  "title": "CMF restricted flat multi-source replay manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "manifest_version",
+    "dataset_id",
+    "sources",
+    "expected_global_group_count"
+  ],
+  "properties": {
+    "format": { "const": "cmf-multi-source-v1" },
+    "manifest_version": { "const": 1 },
+    "dataset_id": { "type": "string", "minLength": 1 },
+    "sources": {
+      "type": "array",
+      "minItems": 2,
+      "items": { "$ref": "#/$defs/source" }
+    },
+    "expected_global_group_count": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "source_priority",
+        "format",
+        "path",
+        "sha256",
+        "bytes",
+        "record_count",
+        "group_count",
+        "min_event_ts_ns",
+        "max_event_ts_ns",
+        "min_source_sequence",
+        "max_source_sequence",
+        "instrument_ids"
+      ],
+      "properties": {
+        "source_id": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+        "source_priority": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+        "format": { "const": "cmf-l2-parquet-cache-v1" },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Relative child-manifest path; absolute paths and '..' components are rejected by runtime."
+        },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "bytes": { "type": "integer", "minimum": 1 },
+        "record_count": { "type": "integer", "minimum": 1 },
+        "group_count": { "type": "integer", "minimum": 1 },
+        "min_event_ts_ns": { "type": "integer" },
+        "max_event_ts_ns": { "type": "integer" },
+        "min_source_sequence": { "type": "integer", "minimum": 1 },
+        "max_source_sequence": { "type": "integer", "minimum": 1 },
+        "instrument_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1 }
+        }
+      }
+    }
+  }
+}

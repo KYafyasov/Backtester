@@ -18,6 +18,9 @@ The `back-tester-tests` executable covers:
   deterministic repeated runs;
 - complete runtime composition from a temporary JSONL source.
 - atomic L2 snapshot replacement and rejection of invalid/mixed L2/L3 state.
+- restricted N-way key ordering, compatible timestamp semantics, globally
+  ordered selected warm-up, full winner-identity lifecycle checks,
+  selected-record conservation/full-replay audit, and global sequences.
 
 CTest also verifies CLI usage and valid/invalid checked-in fixtures.
 
@@ -40,6 +43,8 @@ CTest also verifies CLI usage and valid/invalid checked-in fixtures.
   counts, timestamp/sequence bounds, dates, and aggregate/source totals.
 - atomic success/failure run summaries, source accounting, callback counts,
   full-manifest L2 reconciliation, sequence bounds, and deterministic digest.
+- strict multi-source parent validation, incompatible timestamp rejection,
+  fill provenance, ranged/full-replay audit, and 20-fold deterministic replay.
 
 ### Sanitizers
 

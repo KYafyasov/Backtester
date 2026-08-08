@@ -164,8 +164,11 @@ L3 actions raise typed errors. The reader does not load or sort the full replay.
 Owns deterministic time ordering and thread synchronization:
 
 - `ChronologicalScheduler` is the bounded pending-command heap.
-- `SchedulerRuntime` merges one prefetched market group with delayed commands,
-  starts the dispatcher and consumer threads, and propagates failures.
+- `NWayMarketMerger` optionally selects one prefetched head from each strict
+  L2 child source before `SchedulerRuntime` merges the winner with delayed
+  commands.
+- `SchedulerRuntime` starts the dispatcher and consumer threads and propagates
+  failures.
 - `SpscRing` carries events and commands with documented acquire/release
   publication.
 - `ReadyBarrier` carries the atomic processed sequence.
@@ -202,6 +205,11 @@ provenance, constructs the books, recorder, trading engine, streaming scheduled
 source, and scheduler, then freezes results after the threads join. L2 source
 construction completes the manifest/cache preflight before worker threads
 start.
+
+A `cmf-multi-source-v1` path is parsed as a strict flat parent manifest. The
+runtime validates child manifest hashes/counts/bounds and disjoint ownership,
+then composes L2 leaves through the restricted N-way merger. See
+[`13_restricted_nway_event_merger.md`](13_restricted_nway_event_merger.md).
 
 `discover_databento_instruments()` is the optional metadata discovery pass used
 by the minimal three-argument Python API.

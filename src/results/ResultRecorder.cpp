@@ -132,6 +132,8 @@ public:
     std::vector<Quantity> remaining_quantity;
     std::vector<LiquiditySource> liquidity_source;
     std::vector<Sequence> trigger_source_sequence;
+    std::vector<SourceId> trigger_source_id;
+    std::vector<Sequence> trigger_global_market_sequence;
   } fills;
 
   struct OrderColumns {
@@ -229,6 +231,8 @@ public:
     c.remaining_quantity.reserve(count);
     c.liquidity_source.reserve(count);
     c.trigger_source_sequence.reserve(count);
+    c.trigger_source_id.reserve(count);
+    c.trigger_global_market_sequence.reserve(count);
   }
 
   void reserve_orders(std::size_t count) {
@@ -335,7 +339,9 @@ FillColumnsView FrozenResults::fills() const noexcept {
           c.quantity,
           c.remaining_quantity,
           c.liquidity_source,
-          c.trigger_source_sequence};
+          c.trigger_source_sequence,
+          c.trigger_source_id,
+          c.trigger_global_market_sequence};
 }
 
 OrderLogColumnsView FrozenResults::order_log() const noexcept {
@@ -460,7 +466,8 @@ void ResultRecorder::on_fill(const FillResultRow &row) {
   reserve_row(c.exchange_ts_ns, c.engine_ts_ns, c.instrument_id,
               c.client_order_id, c.side, c.price_ticks, c.quantity,
               c.remaining_quantity, c.liquidity_source,
-              c.trigger_source_sequence);
+              c.trigger_source_sequence, c.trigger_source_id,
+              c.trigger_global_market_sequence);
   impl_->prepare_pnl_append(row.engine_ts_ns);
   const std::size_t old_lot_capacity = ledger.lots.capacity();
   if (append_lot) {
@@ -501,6 +508,9 @@ void ResultRecorder::on_fill(const FillResultRow &row) {
   c.remaining_quantity.push_back(row.remaining_quantity);
   c.liquidity_source.push_back(row.liquidity_source);
   c.trigger_source_sequence.push_back(row.trigger_source_sequence);
+  c.trigger_source_id.push_back(row.trigger_source_id);
+  c.trigger_global_market_sequence.push_back(
+      row.trigger_global_market_sequence);
   impl_->commit_pnl(row.engine_ts_ns, aggregate);
 }
 

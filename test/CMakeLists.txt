@@ -12,6 +12,7 @@ add_executable(${TARGET}
     TradingTest.cpp
     ResultsTest.cpp
     RuntimeTest.cpp
+    NWayMarketMergerTest.cpp
     TestMain.cpp
 )
 

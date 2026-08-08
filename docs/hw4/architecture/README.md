@@ -4,9 +4,10 @@ This directory describes the implemented Homework 4 backtesting engine. It is
 the entry point for understanding the system before reading the C++ or Python
 code.
 
-The engine replays Databento-like MBO JSONL or manifest-backed L2 cache data
-into historical market state, schedules market data and strategy commands on
-one deterministic virtual timeline, simulates private strategy orders, invokes
+The engine replays Databento-like MBO JSONL, one manifest-backed L2 cache, or a
+strict flat parent manifest of disjoint L2 child datasets into historical
+market state. It schedules market data and strategy commands on one
+deterministic virtual timeline, simulates private strategy orders, invokes
 Python callbacks, and returns bulk pandas-compatible results.
 
 ## Architecture at a glance

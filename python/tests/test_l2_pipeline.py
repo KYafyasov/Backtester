@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -65,6 +66,46 @@ def convert_fixture(tmp_path: Path, *extra: str, input_dir: Path | None = None) 
     )
     assert completed.stdout.strip() == str(output / "manifest.json")
     return output / "manifest.json"
+
+
+def create_multi_source_fixture(tmp_path: Path) -> Path:
+    child_manifests: list[Path] = []
+    for instrument_id in (7, 8):
+        child_root = tmp_path / f"bounds-child-{instrument_id}"
+        child_root.mkdir()
+        child_manifests.append(
+            convert_fixture(
+                child_root,
+                "--instrument-id",
+                str(instrument_id),
+                "--dataset-id",
+                f"bounds-child-{instrument_id}",
+            )
+        )
+    parent_path = tmp_path / "bounds_multi_source_manifest.json"
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "create_multi_source_manifest.py"),
+            str(parent_path),
+            "--dataset-id",
+            "bounds-fixture",
+            "--source",
+            f"10:{child_manifests[0]}",
+            "--source",
+            f"20:{child_manifests[1]}",
+        ],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    return parent_path
+
+
+def write_parent_and_run(parent_path: Path, parent: dict) -> None:
+    parent_path.write_text(json.dumps(parent), encoding="utf-8")
+    backtest.run(Strategy(), str(parent_path), DateRange())
 
 
 def test_converter_writes_typed_parquet_cache_and_manifest(tmp_path: Path) -> None:
@@ -147,6 +188,307 @@ def test_l2_manifest_replays_through_public_runtime(tmp_path: Path) -> None:
         "full_manifest_replay": True,
         "full_manifest_counts_match": True,
     }
+
+
+def test_strict_multi_source_manifest_replays_with_global_provenance(
+    tmp_path: Path,
+) -> None:
+    child_manifests: list[Path] = []
+    for instrument_id in (7, 8):
+        child_root = tmp_path / f"child-{instrument_id}"
+        child_root.mkdir()
+        manifest_path = convert_fixture(
+            child_root,
+            "--instrument-id",
+            str(instrument_id),
+            "--dataset-id",
+            f"tiny-l2-{instrument_id}",
+        )
+        child_manifests.append(manifest_path)
+
+    parent_path = tmp_path / "multi_source_manifest.json"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "create_multi_source_manifest.py"),
+            str(parent_path),
+            "--dataset-id",
+            "two-instrument-fixture",
+            "--source",
+            f"10:{child_manifests[0]}",
+            "--source",
+            f"20:{child_manifests[1]}",
+        ],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    assert completed.stdout.strip() == str(parent_path)
+
+    class Capture(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.order_id = 0
+            self.market_order: list[tuple[int, int]] = []
+            self.fill_provenance: tuple[int, int, int] | None = None
+
+        def on_book_update(self, update) -> None:
+            self.market_order.append((update.source_id, update.global_market_sequence))
+            if update.instrument_id == 7 and not self.order_id:
+                self.order_id = self.submit_limit(7, Side.BUY, 101, 1)
+
+        def on_trade(self, trade) -> None:
+            self.market_order.append((trade.source_id, trade.global_market_sequence))
+
+        def on_fill(self, fill) -> None:
+            self.fill_provenance = (
+                fill.trigger_source_id,
+                fill.trigger_source_sequence,
+                fill.trigger_global_market_sequence,
+            )
+
+    summary_path = tmp_path / "multi_run_summary.json"
+    strategy = Capture()
+    result = backtest.run(
+        strategy,
+        str(parent_path),
+        DateRange(),
+        BacktestConfig(order_latency_ns=1, book_depth=2),
+        run_summary_path=str(summary_path),
+    )
+
+    assert strategy.market_order == [
+        (1, 1),
+        (2, 2),
+        (1, 3),
+        (2, 4),
+        (1, 5),
+        (2, 6),
+    ]
+    assert strategy.fill_provenance == (1, 2, 3)
+    assert result.dataset_id == "two-instrument-fixture"
+    assert result.fills_df.iloc[0].trigger_source_id == 1
+    assert result.fills_df.iloc[0].trigger_global_market_sequence == 3
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    audit = summary["source_audit"]
+    assert audit["input_format"] == "multi_source_l2_cache"
+    assert audit["records_read"] == 6
+    assert audit["records_replayed"] == 6
+    assert audit["multi_source"]["global_input_groups"] == 6
+    assert audit["multi_source"]["global_replay_groups"] == 6
+    assert audit["multi_source"]["provenance_digest_fnv1a64_v1"]
+    assert audit["multi_source"]["selected_records_conservation"] is True
+    assert audit["multi_source"]["full_replay_exact_once"] is True
+    assert all(
+        source["selected_records_conservation"]
+        for source in audit["multi_source"]["sources"]
+    )
+    assert all(
+        source["full_replay_exact_once"] for source in audit["multi_source"]["sources"]
+    )
+    assert {
+        source["timestamp_semantics"] for source in audit["multi_source"]["sources"]
+    } == {"exchange"}
+    expected_digest = audit["multi_source"]["provenance_digest_fnv1a64_v1"]
+    for _ in range(19):
+        repeated = Capture()
+        backtest.run(
+            repeated,
+            str(parent_path),
+            DateRange(),
+            BacktestConfig(order_latency_ns=1, book_depth=2),
+            run_summary_path=str(summary_path),
+        )
+        repeated_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        assert repeated.market_order == strategy.market_order
+        assert repeated.fill_provenance == strategy.fill_provenance
+        assert (
+            repeated_summary["source_audit"]["multi_source"][
+                "provenance_digest_fnv1a64_v1"
+            ]
+            == expected_digest
+        )
+
+    backtest.run(
+        Capture(),
+        str(parent_path),
+        DateRange(start_ts_ns=150_000, end_ts_ns=150_000),
+        BacktestConfig(order_latency_ns=1, book_depth=2),
+        run_summary_path=str(summary_path),
+    )
+    ranged_audit = json.loads(summary_path.read_text(encoding="utf-8"))["source_audit"][
+        "multi_source"
+    ]
+    assert ranged_audit["selected_records_conservation"] is True
+    assert ranged_audit["full_replay_exact_once"] is False
+    assert all(
+        source["selected_records_conservation"] and not source["full_replay_exact_once"]
+        for source in ranged_audit["sources"]
+    )
+
+    parent = json.loads(parent_path.read_text(encoding="utf-8"))
+    duplicate_priority = json.loads(json.dumps(parent))
+    duplicate_priority["sources"][1]["source_priority"] = 10
+    parent_path.write_text(json.dumps(duplicate_priority), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="duplicate source_priority"):
+        backtest.run(Capture(), str(parent_path), DateRange())
+
+    wrong_count = json.loads(json.dumps(parent))
+    wrong_count["sources"][0]["record_count"] += 1
+    parent_path.write_text(json.dumps(wrong_count), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="does not match child L2 manifest"):
+        backtest.run(Capture(), str(parent_path), DateRange())
+
+    wrong_hash = json.loads(json.dumps(parent))
+    wrong_hash["sources"][0]["sha256"] = "0" * 64
+    parent_path.write_text(json.dumps(wrong_hash), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="source manifest SHA-256 mismatch"):
+        backtest.run(Capture(), str(parent_path), DateRange())
+
+
+def test_multi_source_rejects_incompatible_timestamp_semantics(
+    tmp_path: Path,
+) -> None:
+    exchange_root = tmp_path / "exchange"
+    receive_root = tmp_path / "receive"
+    exchange_root.mkdir()
+    receive_root.mkdir()
+    exchange_manifest = convert_fixture(
+        exchange_root,
+        "--instrument-id",
+        "7",
+        "--dataset-id",
+        "exchange-child",
+    )
+    receive_manifest = convert_fixture(
+        receive_root,
+        "--instrument-id",
+        "8",
+        "--dataset-id",
+        "receive-child",
+    )
+    parent_path = tmp_path / "incompatible_timestamps.json"
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "create_multi_source_manifest.py"),
+            str(parent_path),
+            "--dataset-id",
+            "incompatible-timestamps",
+            "--source",
+            f"10:{exchange_manifest}",
+            "--source",
+            f"20:{receive_manifest}",
+        ],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    receive_child = json.loads(receive_manifest.read_text(encoding="utf-8"))
+    receive_child["timestamp_semantics"] = "receive"
+    receive_manifest.write_text(json.dumps(receive_child), encoding="utf-8")
+    parent = json.loads(parent_path.read_text(encoding="utf-8"))
+    parent["sources"][1]["bytes"] = receive_manifest.stat().st_size
+    parent["sources"][1]["sha256"] = hashlib.sha256(
+        receive_manifest.read_bytes()
+    ).hexdigest()
+    parent_path.write_text(json.dumps(parent), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="incompatible timestamp_semantics"):
+        backtest.run(Strategy(), str(parent_path), DateRange())
+
+
+def test_multi_source_source_identity_unsigned_boundaries(tmp_path: Path) -> None:
+    parent_path = create_multi_source_fixture(tmp_path)
+    original = json.loads(parent_path.read_text(encoding="utf-8"))
+    maximum = (1 << 32) - 1
+
+    for field in ("source_id", "source_priority"):
+        valid_maximum = json.loads(json.dumps(original))
+        valid_maximum["sources"][0][field] = maximum
+        write_parent_and_run(parent_path, valid_maximum)
+
+        zero = json.loads(json.dumps(original))
+        zero["sources"][0][field] = 0
+        with pytest.raises(RuntimeError, match="ID and priority must be positive"):
+            write_parent_and_run(parent_path, zero)
+
+        for invalid in (-1, maximum + 1):
+            out_of_range = json.loads(json.dumps(original))
+            out_of_range["sources"][0][field] = invalid
+            with pytest.raises(
+                RuntimeError,
+                match=rf"field '{field}' is outside its supported range",
+            ):
+                write_parent_and_run(parent_path, out_of_range)
+
+
+def test_multi_source_unsigned_count_size_and_sequence_boundaries(
+    tmp_path: Path,
+) -> None:
+    parent_path = create_multi_source_fixture(tmp_path)
+    original = json.loads(parent_path.read_text(encoding="utf-8"))
+    uint64_maximum = (1 << 64) - 1
+    fields = (
+        (None, "expected_global_group_count", uint64_maximum),
+        (0, "bytes", uint64_maximum),
+        (0, "record_count", uint64_maximum),
+        (0, "group_count", uint64_maximum),
+        (0, "min_source_sequence", uint64_maximum),
+        (0, "max_source_sequence", uint64_maximum),
+    )
+
+    for source_index, field, maximum in fields:
+
+        def with_value(value: int) -> dict:
+            candidate = json.loads(json.dumps(original))
+            target = (
+                candidate
+                if source_index is None
+                else candidate["sources"][source_index]
+            )
+            target[field] = value
+            return candidate
+
+        with pytest.raises(
+            RuntimeError,
+            match=rf"field '{field}' is outside its supported range",
+        ):
+            write_parent_and_run(parent_path, with_value(-1))
+
+        with pytest.raises(RuntimeError):
+            write_parent_and_run(parent_path, with_value(0))
+
+        with pytest.raises(RuntimeError) as maximum_error:
+            write_parent_and_run(parent_path, with_value(maximum))
+        assert "outside its supported range" not in str(maximum_error.value)
+
+        with pytest.raises(RuntimeError):
+            write_parent_and_run(parent_path, with_value(maximum + 1))
+
+
+def test_multi_source_manifest_version_unsigned_boundaries(tmp_path: Path) -> None:
+    parent_path = create_multi_source_fixture(tmp_path)
+    original = json.loads(parent_path.read_text(encoding="utf-8"))
+    maximum = (1 << 16) - 1
+
+    for value in (-1, maximum + 1):
+        candidate = json.loads(json.dumps(original))
+        candidate["manifest_version"] = value
+        with pytest.raises(
+            RuntimeError,
+            match="field 'manifest_version' is outside its supported range",
+        ):
+            write_parent_and_run(parent_path, candidate)
+
+    for value in (0, maximum):
+        candidate = json.loads(json.dumps(original))
+        candidate["manifest_version"] = value
+        with pytest.raises(RuntimeError, match="unsupported multi-source"):
+            write_parent_and_run(parent_path, candidate)
 
 
 def test_converter_flag_does_not_downgrade_verified_metadata(tmp_path: Path) -> None:

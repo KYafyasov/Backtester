@@ -4,5 +4,6 @@ target_sources(back-tester-lib PRIVATE
     JsonlReader.cpp
     L2CacheReader.cpp
     LimitOrderBook.cpp
+    MultiSourceManifest.cpp
     Parsing.cpp
 )

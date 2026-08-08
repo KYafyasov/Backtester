@@ -23,6 +23,8 @@ FILL_COLUMNS = [
     "remaining_quantity",
     "liquidity_source",
     "trigger_source_sequence",
+    "trigger_source_id",
+    "trigger_global_market_sequence",
 ]
 ORDER_COLUMNS = [
     "engine_ts_ns",
@@ -84,6 +86,8 @@ def test_two_instrument_runtime_contract_and_results():
         "int64",
         "uint8",
         "uint64",
+        "uint32",
+        "uint64",
     ]
     assert fills.iloc[0].to_dict() == {
         "exchange_ts_ns": 200,
@@ -96,6 +100,8 @@ def test_two_instrument_runtime_contract_and_results():
         "remaining_quantity": 0,
         "liquidity_source": 1,
         "trigger_source_sequence": 6,
+        "trigger_source_id": 0,
+        "trigger_global_market_sequence": 0,
     }
 
     assert list(orders.columns) == ORDER_COLUMNS

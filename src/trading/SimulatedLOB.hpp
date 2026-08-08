@@ -24,6 +24,8 @@ struct SyntheticFill {
   Quantity quantity{};
   LiquiditySource liquidity_source{LiquiditySource::HistoricalDisplayed};
   Sequence trigger_source_sequence{};
+  SourceId trigger_source_id{};
+  Sequence trigger_global_market_sequence{};
 };
 
 // The typed private overlay. It owns only this engine's resting orders; the
@@ -99,7 +101,9 @@ private:
                     std::optional<PriceTicks> buy_trigger,
                     std::optional<PriceTicks> sell_trigger,
                     LiquiditySource liquidity_source,
-                    Sequence trigger_source_sequence);
+                    Sequence trigger_source_sequence,
+                    SourceId trigger_source_id = 0,
+                    Sequence trigger_global_market_sequence = 0);
   void insert_resting(const EngineView::PrivateOrder &order);
   void erase_resting(const EngineView::PrivateOrder &order);
   [[nodiscard]] std::span<const SyntheticFill> accept_with_touch(

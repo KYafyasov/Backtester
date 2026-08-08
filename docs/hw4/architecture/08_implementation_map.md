@@ -8,6 +8,7 @@ This page is a code-reading index for the implemented system.
 |---|---|---|
 | Public Python entry point | `python/back_tester/__init__.py`, `src/python/bindings.cpp` | `python/tests/test_runtime.py`, `python/tests/test_end_to_end.py` |
 | Runtime composition | `src/runtime/BacktestRuntime.cpp` | `test/RuntimeTest.cpp` |
+| Restricted flat N-way L2 merge | `src/runtime/NWayMarketMerger.hpp`, `src/market/MultiSourceManifest.*` | `test/NWayMarketMergerTest.cpp`, `python/tests/test_l2_pipeline.py` |
 | Streaming JSONL source | `src/market/JsonlReader.*`, runtime `JsonlScheduledSource` | `test/CoreMarketTest.cpp`, `test/RuntimeTest.cpp` |
 | L2 conversion, trust preflight, and replay | `scripts/convert_l2_csv.py`, `src/market/L2CacheReader.*`, `HistoricalL2Book.*`, runtime `L2CacheScheduledSource` | `python/tests/test_l2_pipeline.py`, L2 cases in `test/CoreMarketTest.cpp` |
 | Historical L3 state | `src/market/LimitOrderBook.*`, `HistoricalLOBStore.*` | `test/CoreMarketTest.cpp` |
@@ -65,6 +66,11 @@ L2CacheReader
 The preflight completes on the caller thread before `SchedulerRuntime` starts
 its dispatcher and trading threads. See
 [`12_l2_manifest_cache_validation.md`](12_l2_manifest_cache_validation.md).
+
+For a strict parent manifest, multiple `L2CacheScheduledSource` leaves stage
+one head each and `NWayMarketMerger` selects the global winner before the same
+Scheduler path. See
+[`13_restricted_nway_event_merger.md`](13_restricted_nway_event_merger.md).
 
 ## Command path
 

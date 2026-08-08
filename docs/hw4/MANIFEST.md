@@ -1,6 +1,6 @@
 # Documentation manifest
 
-Homework 4 contains 26 Markdown files, including this manifest.
+Homework 4 contains 28 Markdown files, including this manifest.
 
 ## Entry points
 
@@ -24,6 +24,7 @@ Homework 4 contains 26 Markdown files, including this manifest.
 - [`architecture/10_shared_contracts.md`](architecture/10_shared_contracts.md)
 - [`architecture/11_requirements_traceability.md`](architecture/11_requirements_traceability.md)
 - [`architecture/12_l2_manifest_cache_validation.md`](architecture/12_l2_manifest_cache_validation.md)
+- [`architecture/13_restricted_nway_event_merger.md`](architecture/13_restricted_nway_event_merger.md)
 
 ## Assignment sources
 
@@ -35,6 +36,7 @@ Homework 4 contains 26 Markdown files, including this manifest.
 
 - [`proposals/01_price_cross_full_fill_traceability.md`](proposals/01_price_cross_full_fill_traceability.md)
 - [`proposals/02_l2_parquet_data_pipeline.md`](proposals/02_l2_parquet_data_pipeline.md)
+- [`proposals/03_generic_nway_event_merger_plan.md`](proposals/03_generic_nway_event_merger_plan.md)
 
 ## Reviews
 
@@ -46,6 +48,7 @@ Homework 4 contains 26 Markdown files, including this manifest.
 
 - [`contracts/01_l2_python_pipeline_contract.md`](contracts/01_l2_python_pipeline_contract.md)
 - [`contracts/l2_dataset_manifest.schema.json`](contracts/l2_dataset_manifest.schema.json)
+- [`contracts/multi_source_manifest.schema.json`](contracts/multi_source_manifest.schema.json)
 
 ## Tasks
 

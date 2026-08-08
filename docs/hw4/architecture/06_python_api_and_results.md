@@ -68,9 +68,9 @@ Payloads are immutable Python-visible objects.
 
 | Payload | Important fields |
 |---|---|
-| `BookUpdate` | `instrument_id`, exchange/engine time, sequence, snapshot flag, bids, asks |
-| `Trade` | instrument, exchange/engine time, sequence, aggressor side, price, quantity |
-| `Fill` | instrument, client order ID, side, price, quantity, remaining quantity, times, sequence |
+| `BookUpdate` | `instrument_id`, exchange/engine time, local sequence, source ID, global market sequence, snapshot flag, bids, asks |
+| `Trade` | instrument, exchange/engine time, local sequence, source ID, global market sequence, aggressor side, price, quantity |
+| `Fill` | instrument, client order ID, side, price, quantity, remaining quantity, times, sequence, trigger provenance |
 | `Reject` | instrument, client order ID, reason, times, sequence |
 
 The native `BookUpdateView` contains callback-scoped spans. The binding copies
@@ -128,6 +128,8 @@ run concurrently. A new run remains possible after a failed run.
 | `remaining_quantity` | `int64` |
 | `liquidity_source` | `uint8` |
 | `trigger_source_sequence` | `uint64` |
+| `trigger_source_id` | `uint32` |
+| `trigger_global_market_sequence` | `uint64` |
 
 ### `order_log_df`
 
@@ -213,6 +215,16 @@ The source accounting identity is:
 records_read = records_warmed + records_replayed + records_after_end
 records_replayed = replayed_book_records + replayed_trade_records
 ```
+
+For `cmf-multi-source-v1`, `source_audit.multi_source` adds the parent dataset
+identity, global input/replay sequence bounds, a provenance digest, and one
+entry per leaf with its timestamp semantics, identity, ownership, bounds, and
+counters. `selected_records_conservation` covers only records selected and
+staged by the ranged readers. `full_replay_exact_once` additionally requires
+every manifest record to be read and replayed with no warm-up or after-end
+head. The global replay count must equal the sum of per-source replay counts.
+Full details and digest fields are specified in
+[`13_restricted_nway_event_merger.md`](13_restricted_nway_event_merger.md).
 
 `records_after_end` is normally zero or one atomic group. The streaming reader
 stops at that boundary; it does not scan the rest of the final partition merely

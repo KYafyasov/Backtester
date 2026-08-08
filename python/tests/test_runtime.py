@@ -212,6 +212,8 @@ def test_real_submission_delayed_fill_state_and_bulk_results(tmp_path):
         "remaining_quantity",
         "liquidity_source",
         "trigger_source_sequence",
+        "trigger_source_id",
+        "trigger_global_market_sequence",
     ]
     assert fills.dtypes.astype(str).tolist() == [
         "int64",
@@ -223,6 +225,8 @@ def test_real_submission_delayed_fill_state_and_bulk_results(tmp_path):
         "int64",
         "int64",
         "uint8",
+        "uint64",
+        "uint32",
         "uint64",
     ]
     assert result.pnl_series.index.dtype == np.dtype("int64")
@@ -310,6 +314,7 @@ def test_optional_run_summary_is_written_atomically_after_success(tmp_path):
             "replayed_sequence_digest_fnv1a64"
         ],
         "manifest_records": None,
+        "multi_source": None,
         "checks": {
             "read_accounting": True,
             "replay_type_accounting": True,

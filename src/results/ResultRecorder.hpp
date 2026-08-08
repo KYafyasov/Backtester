@@ -48,6 +48,8 @@ struct FillColumnsView {
   std::span<const Quantity> remaining_quantity;
   std::span<const LiquiditySource> liquidity_source;
   std::span<const Sequence> trigger_source_sequence;
+  std::span<const SourceId> trigger_source_id;
+  std::span<const Sequence> trigger_global_market_sequence;
 
   [[nodiscard]] std::size_t size() const noexcept {
     return exchange_ts_ns.size();

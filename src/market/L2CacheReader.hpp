@@ -38,10 +38,15 @@ struct L2InputEvent {
 struct L2DatasetMetadata {
   InstrumentMeta instrument;
   std::string dataset_id;
+  TimestampSemantics timestamp_semantics{TimestampSemantics::Unknown};
   bool verified_metadata{};
   std::uint64_t total_rows{};
   std::uint64_t snapshot_rows{};
   std::uint64_t trade_rows{};
+  TimestampNs min_event_ts_ns{};
+  TimestampNs max_event_ts_ns{};
+  Sequence min_merged_sequence{};
+  Sequence max_merged_sequence{};
 };
 
 class L2CacheReader {
@@ -64,6 +69,7 @@ public:
   discover_instrument(const std::string &manifest_path);
   [[nodiscard]] static L2DatasetMetadata
   inspect_manifest(const std::string &manifest_path);
+  [[nodiscard]] static std::string sha256_file(const std::string &path);
 
 private:
   void open_next_partition();

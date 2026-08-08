@@ -52,6 +52,8 @@ struct OwnedBookUpdate {
   bool is_snapshot{};
   std::vector<BookLevel> bids;
   std::vector<BookLevel> asks;
+  SourceId source_id{};
+  Sequence global_market_sequence{};
 };
 
 class PythonStrategyHandle {
@@ -154,7 +156,9 @@ public:
                           view.sequence,
                           view.is_snapshot,
                           {view.bids.begin(), view.bids.end()},
-                          {view.asks.begin(), view.asks.end()}};
+                          {view.asks.begin(), view.asks.end()},
+                          view.source_id,
+                          view.global_market_sequence};
     invoke("on_book_update", std::move(owned), context,
            callback_counts_.book_update);
   }
@@ -215,6 +219,9 @@ public:
     values["liquidity_source"] =
         enum_array<std::uint8_t>(columns.liquidity_source);
     values["trigger_source_sequence"] = array(columns.trigger_source_sequence);
+    values["trigger_source_id"] = array(columns.trigger_source_id);
+    values["trigger_global_market_sequence"] =
+        array(columns.trigger_global_market_sequence);
     return py::module_::import("pandas").attr("DataFrame")(
         values, py::arg("copy") = false);
   }
@@ -313,6 +320,16 @@ exception_message(const std::exception_ptr &failure) noexcept {
   return output.str();
 }
 
+[[nodiscard]] Json provenance_digest(const runtime::RunStatistics &statistics) {
+  if (!statistics.first_global_replay_sequence.has_value()) {
+    return nullptr;
+  }
+  std::ostringstream output;
+  output << std::hex << std::setfill('0') << std::setw(16)
+         << statistics.provenance_digest;
+  return output.str();
+}
+
 void write_run_summary(const std::string &summary_path,
                        const std::string &data_path, DateRange date_range,
                        BacktestConfig config,
@@ -366,10 +383,15 @@ void write_run_summary(const std::string &summary_path,
       statistics.source_records_replayed ==
       statistics.replayed_book_records + statistics.replayed_trade_records;
   const bool sequence_span_matches =
-      !statistics.first_replayed_sequence.has_value() ||
-      (*statistics.last_replayed_sequence -
-           *statistics.first_replayed_sequence + 1 ==
-       statistics.source_records_replayed);
+      statistics.multi_source_input
+          ? (!statistics.first_global_replay_sequence.has_value() ||
+             (*statistics.last_global_replay_sequence -
+                  *statistics.first_global_replay_sequence + 1 ==
+              statistics.global_replay_groups))
+          : (!statistics.first_replayed_sequence.has_value() ||
+             (*statistics.last_replayed_sequence -
+                  *statistics.first_replayed_sequence + 1 ==
+              statistics.source_records_replayed));
   const bool full_manifest_replay =
       statistics.l2_input && statistics.manifest_total_records.has_value() &&
       statistics.source_records_warmed == 0 &&
@@ -383,8 +405,51 @@ void write_run_summary(const std::string &summary_path,
         {"trades", *statistics.manifest_trade_records},
     };
   }
+  Json per_source = Json::array();
+  bool selected_records_conservation = true;
+  bool full_replay_exact_once = true;
+  for (const auto &source : statistics.sources) {
+    Json ownership = Json::array();
+    for (const auto instrument_id : source.instrument_ids) {
+      ownership.push_back(instrument_id);
+    }
+    const bool source_conservation =
+        source.records_read == source.records_warmed + source.records_replayed +
+                                   source.records_after_end;
+    const bool source_full_replay =
+        source_conservation && source.records_read == source.expected_records &&
+        source.records_warmed == 0 && source.records_after_end == 0 &&
+        source.records_replayed == source.expected_records;
+    selected_records_conservation =
+        selected_records_conservation && source_conservation;
+    full_replay_exact_once = full_replay_exact_once && source_full_replay;
+    per_source.push_back({
+        {"source_id", source.source_id},
+        {"source_priority", source.source_priority},
+        {"format", source.format},
+        {"timestamp_semantics", source.timestamp_semantics},
+        {"instrument_ids", std::move(ownership)},
+        {"expected_records", source.expected_records},
+        {"min_event_ts_ns", source.min_event_ts_ns},
+        {"max_event_ts_ns", source.max_event_ts_ns},
+        {"min_source_sequence", source.min_source_sequence},
+        {"max_source_sequence", source.max_source_sequence},
+        {"records_read", source.records_read},
+        {"records_warmed", source.records_warmed},
+        {"records_replayed", source.records_replayed},
+        {"records_after_end", source.records_after_end},
+        {"groups_read", source.groups_read},
+        {"groups_warmed", source.groups_warmed},
+        {"groups_replayed", source.groups_replayed},
+        {"groups_after_end", source.groups_after_end},
+        {"selected_records_conservation", source_conservation},
+        {"full_replay_exact_once", source_full_replay},
+    });
+  }
   Json source_audit = {
-      {"input_format", statistics.l2_input ? "l2_cache" : "mbo_jsonl"},
+      {"input_format", statistics.multi_source_input
+                           ? "multi_source_l2_cache"
+                           : (statistics.l2_input ? "l2_cache" : "mbo_jsonl")},
       {"records_read", statistics.source_records_read},
       {"records_warmed", statistics.source_records_warmed},
       {"records_replayed", statistics.source_records_replayed},
@@ -397,6 +462,25 @@ void write_run_summary(const std::string &summary_path,
        optional_sequence(statistics.last_replayed_sequence)},
       {"replayed_sequence_digest_fnv1a64", sequence_digest(statistics)},
       {"manifest_records", std::move(manifest_counts)},
+      {"multi_source",
+       statistics.multi_source_input
+           ? Json{{"global_input_groups", statistics.global_input_groups},
+                  {"global_replay_groups", statistics.global_replay_groups},
+                  {"first_global_input_sequence",
+                   optional_sequence(statistics.first_global_input_sequence)},
+                  {"last_global_input_sequence",
+                   optional_sequence(statistics.last_global_input_sequence)},
+                  {"first_global_replay_sequence",
+                   optional_sequence(statistics.first_global_replay_sequence)},
+                  {"last_global_replay_sequence",
+                   optional_sequence(statistics.last_global_replay_sequence)},
+                  {"provenance_digest_fnv1a64_v1",
+                   provenance_digest(statistics)},
+                  {"selected_records_conservation",
+                   selected_records_conservation},
+                  {"full_replay_exact_once", full_replay_exact_once},
+                  {"sources", std::move(per_source)}}
+           : Json(nullptr)},
       {"checks",
        {{"read_accounting", read_accounting},
         {"replay_type_accounting", replay_type_accounting},
@@ -557,7 +641,10 @@ PYBIND11_MODULE(_backtester, module) {
       .def_readonly("sequence", &OwnedBookUpdate::sequence)
       .def_readonly("is_snapshot", &OwnedBookUpdate::is_snapshot)
       .def_readonly("bids", &OwnedBookUpdate::bids)
-      .def_readonly("asks", &OwnedBookUpdate::asks);
+      .def_readonly("asks", &OwnedBookUpdate::asks)
+      .def_readonly("source_id", &OwnedBookUpdate::source_id)
+      .def_readonly("global_market_sequence",
+                    &OwnedBookUpdate::global_market_sequence);
   py::class_<cmf::TradeView>(module, "Trade")
       .def_readonly("instrument_id", &cmf::TradeView::instrument_id)
       .def_readonly("exchange_ts_ns", &cmf::TradeView::exchange_ts_ns)
@@ -565,7 +652,10 @@ PYBIND11_MODULE(_backtester, module) {
       .def_readonly("sequence", &cmf::TradeView::sequence)
       .def_readonly("aggressor_side", &cmf::TradeView::aggressor_side)
       .def_readonly("price", &cmf::TradeView::price)
-      .def_readonly("quantity", &cmf::TradeView::quantity);
+      .def_readonly("quantity", &cmf::TradeView::quantity)
+      .def_readonly("source_id", &cmf::TradeView::source_id)
+      .def_readonly("global_market_sequence",
+                    &cmf::TradeView::global_market_sequence);
   py::class_<cmf::FillView>(module, "Fill")
       .def_readonly("instrument_id", &cmf::FillView::instrument_id)
       .def_readonly("client_order_id", &cmf::FillView::client_order_id)
@@ -578,7 +668,10 @@ PYBIND11_MODULE(_backtester, module) {
       .def_readonly("sequence", &cmf::FillView::fill_sequence)
       .def_readonly("liquidity_source", &cmf::FillView::liquidity_source)
       .def_readonly("trigger_source_sequence",
-                    &cmf::FillView::trigger_source_sequence);
+                    &cmf::FillView::trigger_source_sequence)
+      .def_readonly("trigger_source_id", &cmf::FillView::trigger_source_id)
+      .def_readonly("trigger_global_market_sequence",
+                    &cmf::FillView::trigger_global_market_sequence);
   py::class_<cmf::RejectView>(module, "Reject")
       .def_readonly("instrument_id", &cmf::RejectView::instrument_id)
       .def_readonly("client_order_id", &cmf::RejectView::client_order_id)

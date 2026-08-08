@@ -23,6 +23,8 @@ struct BookUpdateView {
   bool is_snapshot{};
   std::span<const BookLevel> bids;
   std::span<const BookLevel> asks;
+  SourceId source_id{};
+  Sequence global_market_sequence{};
 };
 
 struct TradeView {
@@ -33,6 +35,8 @@ struct TradeView {
   Side aggressor_side{Side::None};
   PriceTicks price{};
   Quantity quantity{};
+  SourceId source_id{};
+  Sequence global_market_sequence{};
 };
 
 struct PriceCrossSignal {
@@ -44,6 +48,8 @@ struct PriceCrossSignal {
   std::optional<PriceTicks> best_bid;
   std::optional<PriceTicks> best_ask;
   std::optional<PriceTicks> trade_price;
+  SourceId source_id{};
+  Sequence global_market_sequence{};
 };
 
 struct FillView {
@@ -58,6 +64,8 @@ struct FillView {
   Sequence fill_sequence{};
   LiquiditySource liquidity_source{LiquiditySource::HistoricalDisplayed};
   Sequence trigger_source_sequence{};
+  SourceId trigger_source_id{};
+  Sequence trigger_global_market_sequence{};
 };
 
 struct RejectView {
@@ -96,6 +104,9 @@ struct MarketDelivery {
   std::optional<BookUpdateView> book_update;
   std::span<const TradeView> trades;
   std::span<const PriceCrossSignal> price_cross_signals;
+  SourceId source_id{};
+  Sequence global_input_sequence{};
+  Sequence global_market_sequence{};
 };
 
 struct ScheduledKey {
@@ -140,7 +151,9 @@ public:
         [this]<typename PayloadType>(const PayloadType &payload) {
           if constexpr (std::is_same_v<PayloadType, MarketDelivery>) {
             return ScheduledKey{payload.engine_ts_ns, priority(),
-                                payload.source_sequence};
+                                payload.global_market_sequence == 0
+                                    ? payload.source_sequence
+                                    : payload.global_market_sequence};
           } else {
             return ScheduledKey{payload.scheduled_arrival_ts_ns, priority(),
                                 payload.command_sequence};

@@ -351,6 +351,35 @@ The exact validation order, guarantees, cost, and remaining limitations are
 documented in
 [`architecture/12_l2_manifest_cache_validation.md`](architecture/12_l2_manifest_cache_validation.md).
 
+### Multiple disjoint L2 sources
+
+Build one strict flat parent manifest when a replay needs independently
+ordered L2 datasets for different instruments:
+
+```bash
+uv run python scripts/create_multi_source_manifest.py \
+  data_normalized/multi_source_manifest.json \
+  --dataset-id multi-instrument-run \
+  --source 10:data_normalized/instrument_1/manifest.json \
+  --source 20:data_normalized/instrument_2/manifest.json
+```
+
+Then pass `data_normalized/multi_source_manifest.json` as `data_path` to
+`backtest.run()`. Lower numeric priority wins when child timestamps are equal.
+Source IDs are assigned in command-line order. Children must be L2 manifests
+below the parent directory with exactly one disjoint `instrument_id` each and
+identical `timestamp_semantics`.
+
+Callbacks expose `source_id` and `global_market_sequence`; fills additionally
+expose `trigger_source_id`, local `trigger_source_sequence`, and
+`trigger_global_market_sequence`. With `run_summary_path`, inspect
+`source_audit.multi_source` for selected-record conservation,
+`full_replay_exact_once`, and the versioned provenance digest. The full
+contract and unsupported cases are in
+[`architecture/13_restricted_nway_event_merger.md`](architecture/13_restricted_nway_event_merger.md)
+and
+[`contracts/multi_source_manifest.schema.json`](contracts/multi_source_manifest.schema.json).
+
 Run a bounded end-to-end smoke test that submits one order, receives a fill,
 and observes the resulting position through the direct pybind11 integration:
 

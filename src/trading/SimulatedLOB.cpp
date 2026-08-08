@@ -97,14 +97,16 @@ SimulatedLOB::on_signal(const PriceCrossSignal &signal) {
       throw SimulatedLOBError("best-quote signal carries a trade price");
     }
     match_prices(signal.instrument_id, signal.best_ask, signal.best_bid,
-                 LiquiditySource::QuoteCross, signal.source_sequence);
+                 LiquiditySource::QuoteCross, signal.source_sequence,
+                 signal.source_id, signal.global_market_sequence);
   } else if (signal.source == PriceCrossSource::Trade) {
     if (!signal.trade_price.has_value() || signal.best_bid.has_value() ||
         signal.best_ask.has_value()) {
       throw SimulatedLOBError("trade signal has invalid price fields");
     }
     match_prices(signal.instrument_id, signal.trade_price, signal.trade_price,
-                 LiquiditySource::TradeCross, signal.source_sequence);
+                 LiquiditySource::TradeCross, signal.source_sequence,
+                 signal.source_id, signal.global_market_sequence);
   } else {
     throw SimulatedLOBError("price-cross signal has invalid source");
   }
@@ -124,7 +126,9 @@ void SimulatedLOB::match_prices(InstrumentId instrument_id,
                                 std::optional<PriceTicks> buy_trigger,
                                 std::optional<PriceTicks> sell_trigger,
                                 LiquiditySource liquidity_source,
-                                Sequence trigger_source_sequence) {
+                                Sequence trigger_source_sequence,
+                                SourceId trigger_source_id,
+                                Sequence trigger_global_market_sequence) {
   auto instrument = view_.resting_.find(instrument_id);
   if (instrument == view_.resting_.end()) {
     throw SimulatedLOBError("price-cross signal references unknown instrument");
@@ -149,7 +153,8 @@ void SimulatedLOB::match_prices(InstrumentId instrument_id,
       own->second.remaining_quantity = 0;
       fills_.push_back(SyntheticFill{own->second.client_order_id, *trigger,
                                      fill_quantity, liquidity_source,
-                                     trigger_source_sequence});
+                                     trigger_source_sequence, trigger_source_id,
+                                     trigger_global_market_sequence});
       view_.orders_.erase(own);
     }
   };

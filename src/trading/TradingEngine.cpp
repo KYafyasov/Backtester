@@ -313,14 +313,17 @@ void TradingEngine::apply_fills(std::span<const SyntheticFill> fills,
       throw TradingError("SimulatedLOB filled unknown private order");
     }
     apply_fill(order->second, fill.price, fill.quantity, exchange_ts_ns,
-               fill.liquidity_source, fill.trigger_source_sequence);
+               fill.liquidity_source, fill.trigger_source_sequence,
+               fill.trigger_source_id, fill.trigger_global_market_sequence);
   }
 }
 
 void TradingEngine::apply_fill(OwnOrder &order, PriceTicks price,
                                Quantity quantity, TimestampNs exchange_ts_ns,
                                LiquiditySource liquidity_source,
-                               Sequence trigger_source_sequence) {
+                               Sequence trigger_source_sequence,
+                               SourceId trigger_source_id,
+                               Sequence trigger_global_market_sequence) {
   order.query.filled_quantity += quantity;
   order.query.remaining_quantity -= quantity;
   order.query.state = order.query.remaining_quantity == 0
@@ -347,12 +350,15 @@ void TradingEngine::apply_fill(OwnOrder &order, PriceTicks price,
                       now_ns_,
                       ++next_fill_sequence_,
                       liquidity_source,
-                      trigger_source_sequence};
+                      trigger_source_sequence,
+                      trigger_source_id,
+                      trigger_global_market_sequence};
   recorder_.on_fill(
       FillResultRow{fill.exchange_ts_ns, fill.engine_ts_ns, fill.instrument_id,
                     fill.client_order_id, fill.side, fill.price, fill.quantity,
                     fill.remaining_quantity, fill.liquidity_source,
-                    fill.trigger_source_sequence});
+                    fill.trigger_source_sequence, fill.trigger_source_id,
+                    fill.trigger_global_market_sequence});
   invoke_strategy_callback([this, &fill] { strategy_.on_fill(fill, *this); });
 }
 

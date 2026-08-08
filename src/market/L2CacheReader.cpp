@@ -412,6 +412,15 @@ void validate_positive_number(const Json &object, const char *name) {
   const auto timestamp_semantics =
       manifest_enum(manifest, "timestamp_semantics",
                     {"exchange", "receive", "local_receive", "unknown"});
+  if (timestamp_semantics == "exchange") {
+    metadata.timestamp_semantics = TimestampSemantics::Exchange;
+  } else if (timestamp_semantics == "receive") {
+    metadata.timestamp_semantics = TimestampSemantics::Receive;
+  } else if (timestamp_semantics == "local_receive") {
+    metadata.timestamp_semantics = TimestampSemantics::LocalReceive;
+  } else {
+    metadata.timestamp_semantics = TimestampSemantics::Unknown;
+  }
   if (manifest_string(manifest, "timezone") != "UTC") {
     throw L2CacheError("L2 manifest timezone must be UTC");
   }
@@ -441,12 +450,24 @@ void validate_positive_number(const Json &object, const char *name) {
   if (!partitions.is_array() || partitions.empty()) {
     throw L2CacheError("L2 manifest partitions must be a non-empty array");
   }
+  bool first_partition = true;
   for (const auto &partition : partitions) {
     validate_partition_shape(partition);
     metadata.snapshot_rows +=
         manifest_integer<std::uint64_t>(partition, "snapshot_rows");
     metadata.trade_rows +=
         manifest_integer<std::uint64_t>(partition, "trade_rows");
+    if (first_partition) {
+      metadata.min_event_ts_ns =
+          manifest_integer<TimestampNs>(partition, "min_event_ts_ns");
+      metadata.min_merged_sequence =
+          manifest_integer<Sequence>(partition, "min_merged_sequence");
+      first_partition = false;
+    }
+    metadata.max_event_ts_ns =
+        manifest_integer<TimestampNs>(partition, "max_event_ts_ns");
+    metadata.max_merged_sequence =
+        manifest_integer<Sequence>(partition, "max_merged_sequence");
   }
   const auto &conversion_stats = required(manifest, "conversion_stats");
   validate_object_fields(conversion_stats, "L2 conversion_stats",
@@ -804,6 +825,10 @@ L2CacheReader::discover_instrument(const std::string &manifest_path) {
 L2DatasetMetadata
 L2CacheReader::inspect_manifest(const std::string &manifest_path) {
   return parse_metadata(read_json(manifest_path));
+}
+
+std::string L2CacheReader::sha256_file(const std::string &path) {
+  return cmf::market::sha256_file(path);
 }
 
 L2CacheReader::L2CacheReader(std::string manifest_path,
