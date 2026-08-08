@@ -4,8 +4,8 @@
 `on_book_mark()` input. It consumes decisions made by the trading engine; it
 does not match orders or create transitions.
 
-Each public result field has one typed `std::vector`. All affected vectors are
-reserved before a row is committed, so allocation failure cannot expose a
+Each tabular result column has one typed `std::vector`. All affected vectors
+are reserved before a row is committed, so allocation failure cannot expose a
 partial row. FIFO transitions are first analyzed read-only. The ledger uses a
 contiguous lot vector with a logical head, so closures advance an index instead
 of erasing/shifting the live history. Any required lot/result capacity is
@@ -47,5 +47,32 @@ FrozenResults -----------------------|
 ```
 
 The read-only spans remain valid while any copied `FrozenResults` handle is
-alive, even after the recorder and engine are destroyed. M4A creates no Python,
-NumPy, pandas, or Arrow objects and therefore makes no Python zero-copy claim.
+alive, even after the recorder and engine are destroyed.
+
+## Dataset provenance
+
+`FrozenResults::Storage` also owns optional `DatasetMetadata` containing
+`dataset_id` and `verified_metadata`. This metadata is immutable and shares the
+same lifetime as the result columns, but it is not represented as a tabular
+vector.
+
+For manifest-backed L2 replay, the runtime copies the manifest identity and
+verification state into the recorder before the run starts. For JSONL input,
+the optional metadata remains empty because no dataset manifest established
+those facts. The Python `Result` consequently exposes the two L2 values and
+returns `None` for both properties on JSONL runs.
+
+## Native/Python ownership boundary
+
+The results component itself creates no Python, NumPy, pandas, or Arrow
+objects. The pybind11 layer constructs NumPy arrays that point directly at the
+frozen native columns. Each array carries a capsule containing a shared
+`FrozenResults` owner, so pandas objects created with `copy=False` cannot
+outlive their native storage.
+
+The optional `run_summary.json` is not owned by `ResultRecorder`. Runtime and
+callback audit counters are collected outside the result hot path, and the
+Python binding publishes the summary only after native threads have joined.
+The public schemas, provenance behavior, zero-copy boundary, and run-summary
+contract are documented in
+[`docs/hw4/architecture/06_python_api_and_results.md`](../../docs/hw4/architecture/06_python_api_and_results.md).
