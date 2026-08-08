@@ -2,8 +2,8 @@ include(CTest)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/test)
 
-set(TARGET back-tester-tests)
-add_executable(${TARGET}
+# Deterministic HW4 runtime tests use the checked-in allocation-free runner.
+add_executable(back-tester-tests
     BasicTypesTest.cpp
     CoreMarketTest.cpp
     CoreContractsTest.cpp
@@ -16,12 +16,12 @@ add_executable(${TARGET}
     TestMain.cpp
 )
 
-target_link_libraries(${TARGET} PRIVATE
+target_link_libraries(back-tester-tests PRIVATE
     back-tester-common
     back-tester-lib
 )
 
-add_test(NAME native-unit-tests COMMAND ${TARGET})
+add_test(NAME native-unit-tests COMMAND back-tester-tests)
 
 add_test(
     NAME cli-missing-path
@@ -82,3 +82,33 @@ target_link_libraries(back-tester-price-cross-benchmark PRIVATE
 target_compile_definitions(back-tester-price-cross-benchmark PRIVATE
     BACKTESTER_BENCHMARK_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
 )
+
+if(BUILD_COMPONENT_PIPELINE)
+    # Catch2 and MiniTest both provide TEST_CASE macros and their own main, so
+    # the component suite runs in a separate process.
+    add_executable(back-tester-component-tests
+        TypesBasicTypesTest.cpp
+        DataParserTest.cpp
+        HedgingTest.cpp
+        MergerTest.cpp
+        OrderBookRouterTest.cpp
+        OrderBookTest.cpp
+        PricingTest.cpp
+        QueueTest.cpp
+    )
+
+    target_compile_definitions(back-tester-component-tests PRIVATE
+        FIXTURES_DIR="${CMAKE_SOURCE_DIR}/test/fixtures"
+    )
+
+    target_link_libraries(back-tester-component-tests PRIVATE
+        Catch2-static-lib
+        Threads::Threads
+        back-tester-ingestion
+        back-tester-order-book
+        back-tester-pricing
+        back-tester-hedging
+    )
+
+    add_test(NAME component-unit-tests COMMAND back-tester-component-tests)
+endif()

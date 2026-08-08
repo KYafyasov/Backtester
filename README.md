@@ -288,9 +288,9 @@ totals remain unadjusted. Parsing, process startup, logging, and DataFrame
 construction are outside the timed region. Results are machine-specific
 observations, not universal pass thresholds.
 
-The test executable uses a small checked-in test runner. Native test
-configuration does not download dependencies and does not require anything in
-`3rdparty/`.
+The HW4 runtime tests use a small checked-in test runner. The separate
+component suite inherited from `cmf-team/main` uses Catch2 and exercises the
+Feather ingestion, queue, order-book, pricing, and hedging modules.
 
 ## CLI smoke run
 
@@ -308,6 +308,20 @@ build-release/bin/back-tester test/data/tiny_mbo.jsonl
 ```
 
 A missing or unreadable path exits with status 2.
+
+## Feather ingestion prototype
+
+The component pipeline from `cmf-team/main` is preserved as the separate
+`back-tester-feather` executable. Convert a directory of `.mbo.json` files and
+then pass either one generated file or its containing directory:
+
+```bash
+uv run python scripts/convert_to_feather.py PATH_TO_DATA_DIRECTORY
+build-release/bin/back-tester-feather PATH_TO_DATA_DIRECTORY
+```
+
+The converter creates `.mbo.json.feather` files. This prototype is independent
+of the deterministic Python `backtest.run()` and L2 manifest contracts above.
 
 ## Model limitations
 

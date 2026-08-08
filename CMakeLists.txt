@@ -4,7 +4,12 @@ project(back-tester VERSION 0.0.1 DESCRIPTION "CMF back-tester" LANGUAGES CXX C)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 
+find_package(Threads REQUIRED)
+
 include(cmake/GlobalSettings.cmake)
+if(BUILD_COMPONENT_PIPELINE)
+    include(cmake/ThirdPartyLibs.cmake)
+endif()
 include(cmake/GenerateVersionFile.cmake)
 
 add_subdirectory(src)
@@ -18,4 +23,8 @@ endif()
 if(BUILD_TESTS)
     enable_testing()
     add_subdirectory(test)
+endif()
+
+if(BUILD_BENCHMARKS AND BUILD_COMPONENT_PIPELINE)
+    add_subdirectory(bench)
 endif()
