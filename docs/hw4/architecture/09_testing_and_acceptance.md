@@ -34,7 +34,12 @@ CTest also verifies CLI usage and valid/invalid checked-in fixtures.
 - deterministic repeated results;
 - benchmark output contracts.
 - exact CSV conversion, typed Parquet/cache/manifest output, unverified
-  metadata rejection, and public L2 replay callbacks/fills.
+  metadata rejection/opt-in and result provenance;
+- public L2 replay callbacks/fills, both equal-time policies, snapshot warm-up,
+  selected SHA enforcement, same-size corruption, and adversarial manifest
+  counts, timestamp/sequence bounds, dates, and aggregate/source totals.
+- atomic success/failure run summaries, source accounting, callback counts,
+  full-manifest L2 reconciliation, sequence bounds, and deterministic digest.
 
 ### Sanitizers
 
@@ -93,6 +98,10 @@ The test suite locks the following system behavior:
 - Python failures cannot strand a queue or barrier;
 - returned result objects retain immutable native storage;
 - repeated normalized runs produce identical order/fill ordering.
+- L2 manifest bounds cannot prune data until every cache index has been
+  reconciled, and selected cache hashes pass before worker threads start.
+- a successful full-range L2 summary reconciles replayed snapshot/trade totals
+  with the validated manifest and one market delivery per cache record.
 
 ## Runnable demonstration
 

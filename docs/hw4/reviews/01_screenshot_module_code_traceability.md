@@ -13,7 +13,8 @@ The audit compares:
 - reviewed baseline:
   `c4f4c02916f5a9fb5f2636926fd93cd28af0f46d`;
 - implementation base:
-  `06e29a3e5fd5617675d3e8df54b627c58547a833`;
+  `e738bc349ff6f9fe031d65718e059bd9cf3d4e86` plus the current
+  `feat/l2-parquet-data-pipeline` working tree;
 - source diagram:
   [`02_original_big_picture_mermaid.md`](../source/02_original_big_picture_mermaid.md);
 - adopted scope:
@@ -103,9 +104,15 @@ The topology below is unchanged. Tags and colors reflect the code audit:
 - amber — `PARTIAL / COLLAPSED`;
 - red — `NOT IMPLEMENTED`.
 
+`Data Sources` is green because the adopted runtime role now has complete,
+tested JSONL and normalized-L2 ingestion paths. This does not claim direct
+support for every illustrative format named in the original screenshot:
+direct Feather/Parquet replay remains unsupported and is called out separately
+in the matrix.
+
 ```mermaid
 flowchart TB
-    DATA["Data Sources<br/>(Databento JSON / Feather files)<br/>[PARTIAL]"]
+    DATA["Data Sources<br/>(MBO JSONL / L2 manifest + cache)<br/>[IMPLEMENTED]"]
 
     subgraph PY["Python Layer"]
         VIS["Visualization & Analysis<br/>(matplotlib, Plotly, pandas, Streamlit)<br/>[PARTIAL]"]
@@ -116,7 +123,7 @@ flowchart TB
 
     subgraph CPP["C++ Process"]
         subgraph BT["Backtest Engine Thread"]
-            MERGER["Event Merger<br/>(Flat / Hierarchy)<br/>[PARTIAL]"]
+            MERGER["Event Merger<br/>(Flat / Hierarchy)<br/>[HW4 IMPLEMENTED / GENERIC N-WAY PARTIAL]"]
             DISPATCH["Chronological Dispatcher<br/>[IMPLEMENTED]"]
             LOBS["Map of LOBs<br/>(per instrument)<br/>[IMPLEMENTED]"]
             PUBLISHER["Market Data Publisher<br/>[IMPLEMENTED]"]
@@ -159,8 +166,8 @@ flowchart TB
     classDef partial fill:#fef3c7,stroke:#b45309,color:#78350f,stroke-width:2px
     classDef missing fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d,stroke-width:2px
 
-    class DISPATCH,LOBS,PUBLISHER,CONSUMER,SIM,STRATEGY,ORDERS,PARAM,API implemented
-    class DATA,VIS,MERGER,GW_SERVER,GW_CLIENT,RISK partial
+    class DATA,DISPATCH,LOBS,PUBLISHER,CONSUMER,SIM,STRATEGY,ORDERS,PARAM,API implemented
+    class VIS,MERGER,GW_SERVER,GW_CLIENT,RISK partial
     class SLIPPAGE,FEATURES missing
 ```
 
@@ -169,6 +176,11 @@ flowchart TB
 ### Implemented in the PR
 
 - Databento-like JSONL ingestion;
+- deterministic conversion of local `lob.csv` and `trades.csv` into typed,
+  daily Parquet plus native replay caches and a versioned manifest;
+- manifest-backed L2 replay with metadata policy, full cache-index preflight,
+  selected-partition SHA-256 verification, cross-day warm-up, and replay audit
+  counters;
 - Event Merger for one prefetched market stream plus delayed order commands;
 - Chronological Dispatcher;
 - Map of LOBs per instrument;
@@ -186,7 +198,6 @@ coverage present in the branch, not a transfer of module ownership.
 
 ### Partial or collapsed in the PR
 
-- Data Sources: JSONL is supported, but Feather replay is not;
 - Event Merger: the HW4 market-plus-command merge is implemented, but there is
   no generic flat/hierarchical multi-feed merger;
 - Order Gateway Client / Server: order transport and delayed arrival semantics
@@ -198,7 +209,7 @@ coverage present in the branch, not a transfer of module ownership.
 
 ### Still not implemented
 
-- Feather as a runtime replay source;
+- direct Feather or Parquet replay without a generated manifest/cache dataset;
 - standalone Slippage Simulator;
 - standalone/native Feature Generator;
 - standalone or networked Order Gateway Client / Server;
@@ -213,8 +224,9 @@ implemented, although they are not separate boxes in the screenshot.
 
 | Screenshot module | Status | Production-code evidence | Executable evidence | What is actually implemented / missing |
 |---|---|---|---|---|
-| **Data Sources — Databento JSON** | **Implemented** | [`JsonlReader.hpp:L30-L55`](../../../src/market/JsonlReader.hpp#L30-L55), [`JsonlReader.cpp:L227-L311`](../../../src/market/JsonlReader.cpp#L227-L311), [`BacktestRuntime.cpp:L42-L115`](../../../src/runtime/BacktestRuntime.cpp#L42-L115) | [`CoreMarketTest.cpp:L139-L168`](../../../test/CoreMarketTest.cpp#L139-L168), [`RuntimeTest.cpp:L50-L77`](../../../test/RuntimeTest.cpp#L50-L77) | Streams Databento-like MBO JSONL, parses timestamps/prices once, preserves source order, and stages complete atomic groups. |
-| **Data Sources — Feather files** | **Not implemented** | The production source is constructed as `JsonlScheduledSource` in [`BacktestRuntime.cpp:L311`](../../../src/runtime/BacktestRuntime.cpp#L311). A legacy conversion utility exists at [`scripts/csv2feather.py`](../../../scripts/csv2feather.py), but it is not connected to `backtest.run()`. | No Feather replay test exists. | A Feather reader and runtime source adapter are still absent. |
+| **Data Sources — Databento-like MBO JSONL** | **Implemented** | [`JsonlReader.hpp`](../../../src/market/JsonlReader.hpp), [`JsonlReader.cpp`](../../../src/market/JsonlReader.cpp), and `JsonlScheduledSource` in [`BacktestRuntime.cpp:L64`](../../../src/runtime/BacktestRuntime.cpp#L64) | [`CoreMarketTest.cpp`](../../../test/CoreMarketTest.cpp), [`RuntimeTest.cpp`](../../../test/RuntimeTest.cpp), and [`test_runtime.py`](../../../python/tests/test_runtime.py) | Streams MBO JSONL, parses timestamps/prices once, preserves source order, and stages complete atomic groups. |
+| **Data Sources — local L2 CSV → Parquet/cache** | **Implemented** | The converter and physical schemas are in [`convert_l2_csv.py`](../../../scripts/convert_l2_csv.py). Strict manifest/cache parsing, index reconciliation, range selection, and hashing are in [`L2CacheReader.cpp:L177`](../../../src/market/L2CacheReader.cpp#L177) and [`L2CacheReader.cpp:L651`](../../../src/market/L2CacheReader.cpp#L651). Runtime delivery is in `L2CacheScheduledSource` at [`BacktestRuntime.cpp:L288`](../../../src/runtime/BacktestRuntime.cpp#L288). | Conversion, equal-time ordering, warm-up, corruption, false-index, metadata-policy, public-runtime, and audit tests are in [`test_l2_pipeline.py`](../../../python/tests/test_l2_pipeline.py). | Converts `lob.csv` and `trades.csv` into typed daily Parquet and numeric cache partitions. `backtest.run()` consumes the manifest, validates all cache indexes before pruning, verifies SHA-256 for selected partitions, and replays snapshots/trades by contiguous `merged_sequence`. |
+| **Data Sources — direct Feather/Parquet files** | **Not implemented** | The runtime selects either manifest-backed `L2CacheScheduledSource` or `JsonlScheduledSource` in [`BacktestRuntime.cpp:L552-L586`](../../../src/runtime/BacktestRuntime.cpp#L552-L586). | No direct Feather/Parquet runtime-source test exists. | Parquet is the canonical persisted inspection format, but hot replay intentionally uses native cache files resolved through `manifest.json`. A standalone Feather/Parquet reader is absent and unnecessary for the adopted path. |
 | **Event Merger (Flat / Hierarchy)** | **Implemented for HW4 scope; otherwise partial** | The runtime keeps one prefetched source event and merges it with queued commands in [`SchedulerRuntime.hpp:L179-L220`](../../../src/scheduler/SchedulerRuntime.hpp#L179-L220), [`SchedulerRuntime.hpp:L237-L262`](../../../src/scheduler/SchedulerRuntime.hpp#L237-L262), and [`SchedulerRuntime.hpp:L285-L298`](../../../src/scheduler/SchedulerRuntime.hpp#L285-L298). | [`SchedulerTest.cpp:L253-L278`](../../../test/SchedulerTest.cpp#L253-L278), [`SchedulerTest.cpp:L280-L310`](../../../test/SchedulerTest.cpp#L280-L310) | Deterministically merges the historical market stream with new-order/cancel arrivals. It is not a generic N-feed flat/hierarchical merger. |
 | **Chronological Dispatcher** | **Implemented** | Heap insertion/removal is in [`ChronologicalScheduler.cpp:L8-L45`](../../../src/scheduler/ChronologicalScheduler.cpp#L8-L45); dispatch, stable sequencing, and backward-time rejection are in [`SchedulerRuntime.hpp:L179-L220`](../../../src/scheduler/SchedulerRuntime.hpp#L179-L220). | [`SchedulerTest.cpp:L230-L251`](../../../test/SchedulerTest.cpp#L230-L251), [`SchedulerTest.cpp:L312-L335`](../../../test/SchedulerTest.cpp#L312-L335) | Orders events by `(scheduled timestamp, priority, stable sequence)`, with market data winning equal-time ties. |
 | **Map of LOBs (per instrument)** | **Implemented** | [`HistoricalLOBStore.cpp:L7-L35`](../../../src/market/HistoricalLOBStore.cpp#L7-L35) creates and looks up one historical L3 book per `instrument_id`; the runtime owns the store starting at [`BacktestRuntime.cpp:L311`](../../../src/runtime/BacktestRuntime.cpp#L311). | [`CoreMarketTest.cpp:L495-L510`](../../../test/CoreMarketTest.cpp#L495-L510), two-instrument E2E test [`test_end_to_end.py`](../../../python/tests/test_end_to_end.py) | Independent historical books are routed by numeric instrument ID. |
@@ -240,13 +252,21 @@ The implemented production path corresponding to the screenshot is:
 
 1. `backtest.run()` crosses the pybind11 API boundary:
    [`bindings.cpp:L398`](../../../src/python/bindings.cpp#L398).
-2. `run_backtest()` constructs the per-instrument books, recorder, trading
-   engine, source, and scheduler:
-   [`BacktestRuntime.cpp:L311`](../../../src/runtime/BacktestRuntime.cpp#L311).
-3. `JsonlReader` streams and parses one typed market row:
-   [`JsonlReader.cpp:L227-L300`](../../../src/market/JsonlReader.cpp#L227-L300).
-4. `JsonlScheduledSource` groups rows and stages one market delivery:
-   [`BacktestRuntime.cpp:L56-L116`](../../../src/runtime/BacktestRuntime.cpp#L56-L116).
+2. `run_backtest()` detects whether the path is an L2 manifest, validates
+   metadata policy, constructs the books/recorder/engine, and selects the L2
+   or JSONL source:
+   [`BacktestRuntime.cpp:L537-L587`](../../../src/runtime/BacktestRuntime.cpp#L537-L587).
+3. On the JSONL path, `JsonlReader` parses typed MBO rows and
+   `JsonlScheduledSource` stages complete atomic groups:
+   [`JsonlReader.cpp`](../../../src/market/JsonlReader.cpp),
+   [`BacktestRuntime.cpp:L64-L286`](../../../src/runtime/BacktestRuntime.cpp#L64-L286).
+4. On the L2 path, `L2CacheReader` strictly parses the manifest, reconciles
+   every partition's real cache counts/bounds/sequence with its index, prunes
+   by the verified index, hashes selected caches, and streams typed snapshot
+   or trade records. `L2CacheScheduledSource` applies warm-up and stages each
+   record as one market delivery:
+   [`L2CacheReader.cpp:L651`](../../../src/market/L2CacheReader.cpp#L651),
+   [`BacktestRuntime.cpp:L288-L442`](../../../src/runtime/BacktestRuntime.cpp#L288-L442).
 5. `SchedulerRuntime` merges that delivery with delayed order commands:
    [`SchedulerRuntime.hpp:L179-L220`](../../../src/scheduler/SchedulerRuntime.hpp#L179-L220).
 6. When the market event wins, the source updates `HistoricalLOBStore` and
@@ -270,6 +290,10 @@ The implemented production path corresponding to the screenshot is:
 12. At the end, native columns are frozen and returned as pandas objects:
     [`ResultRecorder.cpp:L544-L554`](../../../src/results/ResultRecorder.cpp#L544-L554),
     [`bindings.cpp:L173-L221`](../../../src/python/bindings.cpp#L173-L221).
+13. If `run_summary_path` was requested, the binding atomically publishes
+    status, effective parameters, source/replay accounting, manifest totals,
+    callback/result counts, sequence bounds, and a rolling sequence digest:
+    [`bindings.cpp:L318-L469`](../../../src/python/bindings.cpp#L318-L469).
 
 ## Important interpretation notes
 

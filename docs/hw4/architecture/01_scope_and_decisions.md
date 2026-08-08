@@ -17,6 +17,9 @@ It is a backtester, not an exchange emulator or a complete options risk system.
 - Multiple instruments in one replay.
 - Databento-like MBO JSONL input, plus manifest-selected L2 replay caches
   generated beside canonical daily Parquet partitions.
+- Pre-thread L2 manifest/cache reconciliation: counts, exact bounds, UTC
+  partition dates, and global sequence continuity are validated before
+  `DateRange` pruning; selected cache SHA-256 values are then verified.
 - Streaming, fail-fast parsing into numeric native types.
 - A per-instrument historical L3 book.
 - A separate aggregated L2 snapshot book; one run never mixes L2 and L3 state
@@ -30,6 +33,8 @@ It is a backtester, not an exchange emulator or a complete options risk system.
 - Per-instrument positions, contract multipliers, FIFO realized PnL, and
   midpoint marking.
 - Native columnar result buffers exposed as pandas DataFrames and a Series.
+- Optional atomic `run_summary.json` with replay audit counters, callback/result
+  counts, configuration, duration, provenance, and failure text.
 - Native, Python, end-to-end, determinism, sanitizer, and benchmark coverage.
 
 Every strategy-facing event, order, position, and result row carries a numeric
@@ -144,3 +149,5 @@ is not produced by the full-fill-on-cross matcher.
   native cache referenced by its manifest.
 - The shipped runtime has one trading `EngineView`; isolation between typed
   `SimulatedLOB` instances is tested but is not exposed by `backtest.run()`.
+- No per-event file logging, log rotation, distributed tracing, or telemetry
+  exporter. Run summaries are opt-in and written once outside the hot path.

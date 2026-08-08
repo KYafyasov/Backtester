@@ -4,16 +4,17 @@ This directory describes the implemented Homework 4 backtesting engine. It is
 the entry point for understanding the system before reading the C++ or Python
 code.
 
-The engine replays Databento-like MBO JSONL data into a historical level-3
-order book, schedules market data and strategy commands on one deterministic
-virtual timeline, simulates private strategy orders, invokes Python callbacks,
-and returns bulk pandas-compatible results.
+The engine replays Databento-like MBO JSONL or manifest-backed L2 cache data
+into historical market state, schedules market data and strategy commands on
+one deterministic virtual timeline, simulates private strategy orders, invokes
+Python callbacks, and returns bulk pandas-compatible results.
 
 ## Architecture at a glance
 
 ```mermaid
 flowchart LR
-    DATA["MBO JSONL"]
+    DATA["MBO JSONL or<br/>L2 manifest/cache"]
+    PREFLIGHT["L2 preflight<br/>before threads"]
     SOURCE["Streaming source<br/>and HistoricalLOBStore"]
     SCHED["Chronological scheduler<br/>dispatcher thread"]
     RING["SPSC event ring<br/>processed_seq barrier"]
@@ -21,7 +22,7 @@ flowchart LR
     STRATEGY["Python Strategy"]
     RESULTS["Frozen native columns<br/>pandas views"]
 
-    DATA --> SOURCE --> SCHED --> RING --> ENGINE
+    DATA --> PREFLIGHT --> SOURCE --> SCHED --> RING --> ENGINE
     ENGINE <--> STRATEGY
     ENGINE --> RESULTS
     ENGINE -- "delayed order/cancel commands" --> SCHED
@@ -59,6 +60,9 @@ trading thread is reacting to the current delivery.
 11. [`11_requirements_traceability.md`](11_requirements_traceability.md)
     — traceability from the assignment text and original big-picture diagram
     to implemented code and verification.
+12. [`12_l2_manifest_cache_validation.md`](12_l2_manifest_cache_validation.md)
+    — manifest trust boundary, all-cache preflight, verified `DateRange`
+    selection, selected SHA checks, diagnostic consent, and current limits.
 
 ## Sources and authority
 

@@ -74,6 +74,12 @@ flowchart TB
 binding releases the GIL around the native run. The trading thread reacquires
 the GIL only while calling a Python strategy method.
 
+For L2 input, source construction first performs the manifest/cache preflight
+on the caller thread. Counts, bounds, UTC dates, and global sequence continuity
+are reconciled before `DateRange` pruning, and selected hashes are checked
+before `SchedulerRuntime::run()` may start either worker thread. See
+[`12_l2_manifest_cache_validation.md`](12_l2_manifest_cache_validation.md).
+
 ## Ownership
 
 | State | Writer | Read access |

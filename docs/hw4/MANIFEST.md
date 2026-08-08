@@ -1,6 +1,6 @@
 # Documentation manifest
 
-Homework 4 contains 23 Markdown files, including this manifest.
+Homework 4 contains 26 Markdown files, including this manifest.
 
 ## Entry points
 
@@ -23,6 +23,7 @@ Homework 4 contains 23 Markdown files, including this manifest.
 - [`architecture/09_testing_and_acceptance.md`](architecture/09_testing_and_acceptance.md)
 - [`architecture/10_shared_contracts.md`](architecture/10_shared_contracts.md)
 - [`architecture/11_requirements_traceability.md`](architecture/11_requirements_traceability.md)
+- [`architecture/12_l2_manifest_cache_validation.md`](architecture/12_l2_manifest_cache_validation.md)
 
 ## Assignment sources
 
@@ -38,6 +39,8 @@ Homework 4 contains 23 Markdown files, including this manifest.
 ## Reviews
 
 - [`reviews/01_screenshot_module_code_traceability.md`](reviews/01_screenshot_module_code_traceability.md)
+- [`reviews/02_l2_parquet_pipeline_traceability_review.md`](reviews/02_l2_parquet_pipeline_traceability_review.md)
+- [`reviews/03_l2_manifest_index_p1_closure_review.md`](reviews/03_l2_manifest_index_p1_closure_review.md)
 
 ## Contracts
 

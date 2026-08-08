@@ -113,8 +113,8 @@ def timestamp_ns(text: str, unit: str, context: str) -> int:
 
 def expected_lob_header(depth: int) -> list[str]:
     columns = ["", "local_timestamp"]
-    for side in ("asks", "bids"):
-        for index in range(depth):
+    for index in range(depth):
+        for side in ("asks", "bids"):
             columns.extend((f"{side}[{index}].price", f"{side}[{index}].amount"))
     return columns
 
@@ -489,6 +489,16 @@ def utc_date(timestamp: int) -> str:
         ) from error
 
 
+def metadata_is_verified(config: Config) -> bool:
+    return bool(
+        config.symbol
+        and config.source_provider
+        and config.venue
+        and config.timestamp_semantics != "unknown"
+        and config.trade_side_semantics != "unknown"
+    )
+
+
 def validate_config(config: Config) -> None:
     if (
         config.instrument_id <= 0
@@ -506,14 +516,7 @@ def validate_config(config: Config) -> None:
         raise ConversionError("batch rows must be positive")
     if config.timezone != "UTC":
         raise ConversionError("version 1 supports UTC partitioning only")
-    unknown = (
-        not config.symbol
-        or not config.source_provider
-        or not config.venue
-        or config.timestamp_semantics == "unknown"
-        or config.trade_side_semantics == "unknown"
-    )
-    if unknown and not config.allow_unverified_metadata:
+    if not metadata_is_verified(config) and not config.allow_unverified_metadata:
         raise ConversionError(
             "unverified provenance/semantics require --allow-unverified-metadata"
         )
@@ -564,7 +567,7 @@ def convert(config: Config) -> Path:
             "manifest_version": 1,
             "data_schema_version": SCHEMA_VERSION,
             "dataset_id": config.dataset_id,
-            "verified_metadata": not config.allow_unverified_metadata,
+            "verified_metadata": metadata_is_verified(config),
             "source_provider": config.source_provider,
             "venue": config.venue,
             "symbol": config.symbol,

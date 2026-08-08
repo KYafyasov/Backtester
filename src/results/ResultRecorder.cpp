@@ -154,6 +154,8 @@ public:
     std::vector<double> total_pnl;
   } pnl;
 
+  std::optional<DatasetMetadata> dataset_metadata;
+
   bool frozen{};
 };
 
@@ -179,8 +181,13 @@ public:
   };
 
   Impl(std::span<const InstrumentMeta> instruments,
-       ResultReserveEstimate estimate)
+       ResultReserveEstimate estimate,
+       std::optional<DatasetMetadata> dataset_metadata)
       : storage(std::make_shared<FrozenResults::Storage>()) {
+    if (dataset_metadata.has_value() && dataset_metadata->dataset_id.empty()) {
+      throw std::invalid_argument("dataset id must not be empty");
+    }
+    storage->dataset_metadata = std::move(dataset_metadata);
     for (const auto &meta : instruments) {
       if (meta.instrument_id <= 0 || meta.tick_size_ticks <= 0 ||
           meta.price_scale <= 0 || meta.contract_multiplier <= 0) {
@@ -356,9 +363,17 @@ FrozenResults::exact_pnl() const noexcept {
              : std::span<const AccountCurrencyAmount>{};
 }
 
+const std::optional<DatasetMetadata> &
+FrozenResults::dataset_metadata() const noexcept {
+  static const std::optional<DatasetMetadata> empty;
+  return storage_ ? storage_->dataset_metadata : empty;
+}
+
 ResultRecorder::ResultRecorder(std::span<const InstrumentMeta> instruments,
-                               ResultReserveEstimate estimate)
-    : impl_(std::make_unique<Impl>(instruments, estimate)) {}
+                               ResultReserveEstimate estimate,
+                               std::optional<DatasetMetadata> dataset_metadata)
+    : impl_(std::make_unique<Impl>(instruments, estimate,
+                                   std::move(dataset_metadata))) {}
 
 ResultRecorder::~ResultRecorder() = default;
 

@@ -17,6 +17,27 @@
 namespace cmf::runtime {
 namespace {
 
+inline constexpr std::uint64_t fnv1a_offset_basis = 14695981039346656037ULL;
+inline constexpr std::uint64_t fnv1a_prime = 1099511628211ULL;
+
+void record_replayed_sequence(RunStatistics *statistics, Sequence sequence) {
+  if (statistics == nullptr) {
+    return;
+  }
+  if (!statistics->first_replayed_sequence.has_value()) {
+    statistics->first_replayed_sequence = sequence;
+    statistics->replayed_sequence_digest = fnv1a_offset_basis;
+  }
+  statistics->last_replayed_sequence = sequence;
+  auto value = static_cast<std::uint64_t>(sequence);
+  for (std::size_t index = 0; index < sizeof(value); ++index) {
+    statistics->replayed_sequence_digest ^=
+        static_cast<std::uint8_t>(value & 0xffU);
+    statistics->replayed_sequence_digest *= fnv1a_prime;
+    value >>= 8U;
+  }
+}
+
 [[nodiscard]] TimestampNs checked_delivery_time(TimestampNs exchange_time,
                                                 TimestampNs latency) {
   TimestampNs result{};
@@ -45,9 +66,9 @@ public:
   JsonlScheduledSource(std::string path,
                        market::JsonlReader::InstrumentMap instruments,
                        market::HistoricalLOBStore &books, DateRange range,
-                       BacktestConfig config)
+                       BacktestConfig config, RunStatistics *statistics)
       : path_(path), reader_(std::move(path), std::move(instruments)),
-        books_(books), range_(range), config_(config) {
+        books_(books), range_(range), config_(config), statistics_(statistics) {
     group_.reserve(8);
     bids_.reserve(config.book_depth);
     asks_.reserve(config.book_depth);
@@ -93,7 +114,14 @@ public:
         group_.push_back(next_event);
       }
 
+      if (statistics_ != nullptr) {
+        statistics_->source_records_read += group_.size();
+      }
+
       if (exchange_time < range_.start_ts_ns) {
+        if (statistics_ != nullptr) {
+          statistics_->source_records_warmed += group_.size();
+        }
         for (const auto &event : group_) {
           books_.apply(event);
         }
@@ -101,7 +129,22 @@ public:
         continue;
       }
       if (exchange_time > range_.end_ts_ns) {
+        if (statistics_ != nullptr) {
+          statistics_->source_records_after_end += group_.size();
+        }
         return false;
+      }
+
+      if (statistics_ != nullptr) {
+        statistics_->source_records_replayed += group_.size();
+        for (const auto &event : group_) {
+          record_replayed_sequence(statistics_, event.source_sequence);
+          if (event.action == market::MarketAction::Trade) {
+            ++statistics_->replayed_trade_records;
+          } else {
+            ++statistics_->replayed_book_records;
+          }
+        }
       }
 
       const TimestampNs engine_time =
@@ -232,6 +275,7 @@ private:
   market::HistoricalLOBStore &books_;
   DateRange range_;
   BacktestConfig config_;
+  RunStatistics *statistics_{};
   std::unordered_map<InstrumentId, CachedDepth> previous_depth_;
   std::vector<market::MarketDataEvent> group_;
   std::vector<BookLevel> bids_;
@@ -246,9 +290,10 @@ public:
   L2CacheScheduledSource(std::string manifest_path,
                          market::L2CacheReader::InstrumentMap instruments,
                          market::HistoricalLOBStore &books, DateRange range,
-                         BacktestConfig config)
-      : reader_(std::move(manifest_path), std::move(instruments), range),
-        books_(books), range_(range), config_(config) {
+                         BacktestConfig config, RunStatistics *statistics)
+      : reader_(std::move(manifest_path), std::move(instruments), range,
+                config.allow_unverified_metadata),
+        books_(books), range_(range), config_(config), statistics_(statistics) {
     bids_.reserve(config.book_depth);
     asks_.reserve(config.book_depth);
     trades_.reserve(1);
@@ -267,7 +312,13 @@ public:
       if (!reader_.next(event_)) {
         return false;
       }
+      if (statistics_ != nullptr) {
+        ++statistics_->source_records_read;
+      }
       if (event_.event_ts_ns < range_.start_ts_ns) {
+        if (statistics_ != nullptr) {
+          ++statistics_->source_records_warmed;
+        }
         if (event_.kind == market::L2EventKind::Snapshot) {
           books_.replace_snapshot(event_.instrument_id, event_.bids,
                                   event_.asks, event_.merged_sequence);
@@ -276,7 +327,19 @@ public:
         continue;
       }
       if (event_.event_ts_ns > range_.end_ts_ns) {
+        if (statistics_ != nullptr) {
+          ++statistics_->source_records_after_end;
+        }
         return false;
+      }
+      if (statistics_ != nullptr) {
+        ++statistics_->source_records_replayed;
+        record_replayed_sequence(statistics_, event_.merged_sequence);
+        if (event_.kind == market::L2EventKind::Snapshot) {
+          ++statistics_->replayed_book_records;
+        } else {
+          ++statistics_->replayed_trade_records;
+        }
       }
       const auto engine_time = checked_delivery_time(
           event_.event_ts_ns, config_.market_data_latency_ns);
@@ -368,6 +431,7 @@ private:
   market::HistoricalLOBStore &books_;
   DateRange range_;
   BacktestConfig config_;
+  RunStatistics *statistics_{};
   market::L2InputEvent event_;
   std::unordered_map<InstrumentId, CachedDepth> previous_depth_;
   std::vector<BookLevel> bids_;
@@ -406,11 +470,24 @@ void validate(DateRange range, BacktestConfig config,
 template <typename Source>
 void execute_source(Source &source, trading::TradingEngine &engine,
                     market::HistoricalLOBStore &books,
-                    results::ResultRecorder &recorder, DateRange range) {
+                    results::ResultRecorder &recorder, DateRange range,
+                    RunStatistics *statistics) {
   scheduler::SchedulerRuntime scheduler(
       scheduler::SchedulerRuntimeConfig{range, 1, 64, 4096});
   scheduler.run(source, [&](const ScheduledEvent &event,
                             scheduler::CommandSink &commands) {
+    if (statistics != nullptr) {
+      ++statistics->scheduled_events;
+      if (const auto *delivery =
+              std::get_if<MarketDelivery>(&event.payload())) {
+        ++statistics->market_deliveries;
+        statistics->source_trade_events += delivery->trades.size();
+      } else if (std::holds_alternative<NewOrderCommand>(event.payload())) {
+        ++statistics->new_order_arrivals;
+      } else {
+        ++statistics->cancel_arrivals;
+      }
+    }
     engine(event, commands);
     const auto *delivery = std::get_if<MarketDelivery>(&event.payload());
     if (delivery == nullptr || !delivery->book_update.has_value()) {
@@ -460,7 +537,11 @@ discover_databento_instruments(const std::string &data_path) {
 results::FrozenResults run_backtest(trading::Strategy &strategy,
                                     const std::string &data_path,
                                     DateRange date_range, BacktestConfig config,
-                                    std::vector<InstrumentMeta> instruments) {
+                                    std::vector<InstrumentMeta> instruments,
+                                    RunStatistics *statistics) {
+  if (statistics != nullptr) {
+    *statistics = {};
+  }
   validate(date_range, config, instruments);
   market::JsonlReader::InstrumentMap metadata;
   metadata.reserve(instruments.size());
@@ -469,17 +550,39 @@ results::FrozenResults run_backtest(trading::Strategy &strategy,
   }
 
   market::HistoricalLOBStore books;
+  const bool is_l2 = market::L2CacheReader::is_l2_manifest(data_path);
+  if (statistics != nullptr) {
+    statistics->l2_input = is_l2;
+  }
+  std::optional<results::DatasetMetadata> dataset_metadata;
+  if (is_l2) {
+    const auto manifest = market::L2CacheReader::inspect_manifest(data_path);
+    if (!manifest.verified_metadata && !config.allow_unverified_metadata) {
+      throw market::L2CacheError(
+          "unverified L2 metadata requires allow_unverified_metadata=true");
+    }
+    dataset_metadata.emplace(results::DatasetMetadata{
+        manifest.dataset_id, manifest.verified_metadata});
+    if (statistics != nullptr) {
+      statistics->dataset_id = manifest.dataset_id;
+      statistics->verified_metadata = manifest.verified_metadata;
+      statistics->manifest_total_records = manifest.total_rows;
+      statistics->manifest_snapshot_records = manifest.snapshot_rows;
+      statistics->manifest_trade_records = manifest.trade_rows;
+    }
+  }
   results::ResultRecorder recorder(
-      instruments, results::ResultReserveEstimate{64, 128, 128, 16});
+      instruments, results::ResultReserveEstimate{64, 128, 128, 16},
+      std::move(dataset_metadata));
   trading::TradingEngine engine(instruments, config, books, strategy, recorder);
-  if (market::L2CacheReader::is_l2_manifest(data_path)) {
+  if (is_l2) {
     L2CacheScheduledSource source(data_path, std::move(metadata), books,
-                                  date_range, config);
-    execute_source(source, engine, books, recorder, date_range);
+                                  date_range, config, statistics);
+    execute_source(source, engine, books, recorder, date_range, statistics);
   } else {
     JsonlScheduledSource source(data_path, std::move(metadata), books,
-                                date_range, config);
-    execute_source(source, engine, books, recorder, date_range);
+                                date_range, config, statistics);
+    execute_source(source, engine, books, recorder, date_range, statistics);
   }
   return recorder.freeze();
 }

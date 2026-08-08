@@ -146,8 +146,9 @@ or matching logic.
 Owns input parsing and shared historical state:
 
 - `JsonlReader` streams and validates physical JSONL rows.
-- `L2CacheReader` validates the dataset manifest, cache headers, metadata,
-  record boundaries, and global chronology.
+- `L2CacheReader` validates the dataset manifest and metadata, reconciles every
+  cache's counts/bounds/date and global sequence continuity before range
+  pruning, verifies selected cache hashes, and then streams numeric records.
 - `Parsing` converts timestamps and decimal prices once into native integers.
 - `LimitOrderBook` reconstructs per-instrument L3 state and exposes ordered
   historical slices and top-N aggregated levels.
@@ -196,9 +197,11 @@ It creates no pandas or Python objects in the native event loop.
 ### `src/runtime`
 
 `run_backtest()` validates configuration and instrument metadata, detects an
-L2 dataset manifest or the compatible JSONL path, constructs
-the books, recorder, trading engine, streaming scheduled source, and scheduler,
-then freezes results after the threads join.
+L2 dataset manifest or the compatible JSONL path, captures L2 dataset
+provenance, constructs the books, recorder, trading engine, streaming scheduled
+source, and scheduler, then freezes results after the threads join. L2 source
+construction completes the manifest/cache preflight before worker threads
+start.
 
 `discover_databento_instruments()` is the optional metadata discovery pass used
 by the minimal three-argument Python API.
@@ -211,7 +214,8 @@ The `_backtester` pybind11 module:
 - adapts Python Strategy methods to the native `Strategy` interface;
 - activates the Strategy context only during a callback;
 - releases the GIL for the native run and reacquires it per callback;
-- exposes frozen native columns through NumPy-backed pandas objects.
+- exposes frozen native columns through NumPy-backed pandas objects;
+- optionally publishes one atomic JSON run summary after success or failure.
 
 The pure-Python package `python/back_tester/__init__.py` re-exports the module
 and supplies the documented `backtest.run` namespace.

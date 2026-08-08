@@ -44,6 +44,7 @@ result = backtest.run(
             contract_multiplier=1,
         )
     ],
+    run_summary_path="artifacts/run_summary.json",
 )
 ```
 
@@ -167,3 +168,79 @@ capsule holding a shared owner. Pandas objects are created in bulk with
 
 The native storage remains alive as long as an exposed array, DataFrame, Series,
 or Result wrapper retains it. Result buffers are immutable after `freeze()`.
+
+## Dataset provenance
+
+For manifest-backed L2 replay, `Result.dataset_id` and
+`Result.verified_metadata` retain the immutable manifest identity and
+verification state. Unverified L2 replay fails before threads start unless the
+caller explicitly sets `BacktestConfig.allow_unverified_metadata=True`.
+JSONL inputs have no dataset manifest, so both result properties are `None`
+rather than claiming a verification state that was not established.
+
+## Optional run summary and replay audit
+
+`backtest.run()` accepts an optional sixth argument,
+`run_summary_path`. The default is `None`, which performs no logging and no
+filesystem I/O. When a path is supplied, its parent directories are created
+and one schema-versioned JSON document is atomically renamed into place after
+the native threads have joined:
+
+```python
+result = backtest.run(
+    strategy,
+    data_path,
+    date_range,
+    config,
+    instruments,
+    run_summary_path="artifacts/run_summary.json",
+)
+```
+
+The file contains:
+
+| Section | Meaning |
+|---|---|
+| `status`, `duration_ns`, `error` | completion state, wall duration, and failure text |
+| `data_path`, `dataset_id`, `verified_metadata` | input identity and L2 provenance |
+| `date_range`, `config`, `instruments` | effective replay parameters |
+| `counts` | scheduled deliveries/commands, callbacks, fills, order rows, and PnL points |
+| `source_audit` | source records read, warmed, replayed, and observed after the requested end |
+
+The source accounting identity is:
+
+```text
+records_read = records_warmed + records_replayed + records_after_end
+records_replayed = replayed_book_records + replayed_trade_records
+```
+
+`records_after_end` is normally zero or one atomic group. The streaming reader
+stops at that boundary; it does not scan the rest of the final partition merely
+to inflate an audit counter. Partitions wholly outside the range are pruned by
+the manifest index and are not reported as physically read records.
+
+For an L2 full-dataset run, `source_audit.checks` additionally establishes:
+
+```text
+records_replayed = manifest total rows
+replayed_book_records = manifest snapshot rows
+replayed_trade_records = manifest trade rows
+market_deliveries = records_replayed
+trade callbacks = replayed trade records
+last sequence - first sequence + 1 = records_replayed
+```
+
+`replayed_sequence_digest_fnv1a64` is a deterministic rolling fingerprint of
+the replayed source/merged sequences. It is useful for comparing repeated runs,
+but it is not a cryptographic integrity proof. L2 cache integrity is separately
+protected by the manifest SHA-256 checks.
+
+On a callback or runtime exception, the summary uses `status="failed"`, retains
+the counters reached before stop, sets unavailable result-row counts to `null`,
+and records the exception message. Failure to write this diagnostic file never
+masks the original replay exception. On a successful replay, inability to
+publish the requested summary is itself reported as an error.
+
+This is deliberately not per-event logging or distributed tracing. No file I/O,
+JSON serialization, or string formatting occurs in the matching/event loop;
+the loop only increments fixed-size native counters.

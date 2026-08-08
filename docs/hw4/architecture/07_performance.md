@@ -99,6 +99,15 @@ uv run python scripts/benchmark_l2_replay.py \
 This includes cache decoding, scheduling, historical snapshot replacement,
 callbacks to a no-op Python strategy, acknowledgements, and result freezing.
 
+Schema-v1 runtime also performs one payload-skipping metadata scan of every
+cache before range pruning because the cache header has no authenticated
+counts/bounds footer. On the current six-partition, 22,901,679-event dataset,
+the bounded 10-second smoke took 5.29 seconds after preflight versus 1.63
+seconds before it on the same development machine. This fixed correctness cost
+is separate from the number of events inside the requested range. Details and
+the future-version trade-off are in
+[`12_l2_manifest_cache_validation.md`](12_l2_manifest_cache_validation.md).
+
 ## Interpreting results
 
 Benchmark values are machine-specific observations for regression comparison,

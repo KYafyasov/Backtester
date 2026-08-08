@@ -35,12 +35,21 @@ struct L2InputEvent {
   std::vector<BookLevel> asks;
 };
 
+struct L2DatasetMetadata {
+  InstrumentMeta instrument;
+  std::string dataset_id;
+  bool verified_metadata{};
+  std::uint64_t total_rows{};
+  std::uint64_t snapshot_rows{};
+  std::uint64_t trade_rows{};
+};
+
 class L2CacheReader {
 public:
   using InstrumentMap = std::unordered_map<InstrumentId, InstrumentMeta>;
 
   L2CacheReader(std::string manifest_path, InstrumentMap instruments,
-                DateRange range = {});
+                DateRange range = {}, bool allow_unverified_metadata = false);
 
   bool next(L2InputEvent &event);
   [[nodiscard]] const InstrumentMeta &instrument() const noexcept {
@@ -53,6 +62,8 @@ public:
   [[nodiscard]] static bool is_l2_manifest(const std::string &path);
   [[nodiscard]] static InstrumentMeta
   discover_instrument(const std::string &manifest_path);
+  [[nodiscard]] static L2DatasetMetadata
+  inspect_manifest(const std::string &manifest_path);
 
 private:
   void open_next_partition();

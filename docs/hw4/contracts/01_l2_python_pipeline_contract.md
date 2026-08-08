@@ -47,16 +47,20 @@ trades.csv
 
 Additional files MAY be present but MUST NOT silently affect conversion.
 
+In `manifest.json`, `source_files` MUST contain exactly two entries in stable
+order: `lob.csv` first and `trades.csv` second. Runtime reconciliation maps
+their row counts to snapshot and trade cache records respectively.
+
 ### 3.1 `lob.csv`
 
 The header MUST be exact. The first two columns are an unnamed source index and
-`local_timestamp`. They are followed by price/amount pairs for all asks and
-then all bids:
+`local_timestamp`. They are followed by interleaved ask/bid price/amount pairs
+for each depth index, matching the source dataset:
 
 ```text
 "",local_timestamp,
-asks[0].price,asks[0].amount,...,asks[D-1].price,asks[D-1].amount,
-bids[0].price,bids[0].amount,...,bids[D-1].price,bids[D-1].amount
+asks[0].price,asks[0].amount,bids[0].price,bids[0].amount,...,
+asks[D-1].price,asks[D-1].amount,bids[D-1].price,bids[D-1].amount
 ```
 
 `D` MUST equal configured `book_depth`. Production data uses `D=25`; smaller
@@ -121,9 +125,11 @@ caller explicitly passes `--allow-unverified-metadata`. Such output MUST set
 `verified_metadata=false`. Merely passing that flag MUST NOT turn otherwise
 confirmed metadata into unverified metadata.
 
-The native runtime MUST require separate explicit consent before replaying a
-manifest with `verified_metadata=false`. Until that runtime consent exists,
-unverified output is suitable only for converter/schema diagnostics.
+Unverified output is suitable only for explicit diagnostic replay. The caller
+opts in with `BacktestConfig(allow_unverified_metadata=True)`; merely passing a
+manifest path is not consent. The runtime MUST NOT start replay threads or
+substitute an unverified dataset without that flag. Every L2 `Result` MUST
+retain the manifest `dataset_id` and `verified_metadata` value.
 
 ## 6. Exact normalization
 
@@ -246,8 +252,12 @@ cannot express conveniently:
 9. deterministic sampled source rows equal their normalized Parquet values.
 
 SHA-256 is lowercase hexadecimal over the exact persisted bytes. Generated
-hashes are part of dataset identity. The runtime MUST verify selected replay
-cache hashes before starting scheduler threads.
+hashes are part of dataset identity. Before using manifest bounds for
+`DateRange` pruning, the schema-v1 runtime MUST scan every replay-cache index
+and reconcile record-kind counts, exact timestamp/sequence bounds, UTC date,
+global sequence continuity, source row totals, and `conversion_stats.rows`.
+It MUST then verify the selected replay-cache hashes before starting scheduler
+threads. Unselected hashes are not a replay gate.
 
 ## 11. Replay cache boundary
 
@@ -315,8 +325,6 @@ The handoff is incomplete until automated tests cover:
 
 At contract publication time the implementation is a fixture-backed prototype:
 
-- runtime consent for unverified data is not implemented;
-- runtime does not verify recorded cache SHA-256;
 - persisted Parquet validation does not yet cover every cross-field invariant;
 - the negative converter test matrix is incomplete;
 - real-data provenance and full-data benchmarks are unresolved;

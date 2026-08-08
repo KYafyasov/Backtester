@@ -118,6 +118,24 @@ The returned `Result` contains:
 - `order_log_df`;
 - `pnl_series`.
 
+For an auditable run, pass an optional summary path. No log file is created by
+default:
+
+```python
+result = backtest.run(
+    strategy,
+    path,
+    date_range,
+    config,
+    instruments,
+    run_summary_path="artifacts/run_summary.json",
+)
+```
+
+The JSON records effective parameters, duration, source/replay/callback/result
+counts, L2 manifest totals, sequence bounds and a rolling sequence fingerprint.
+It is also written with `status="failed"` when replay or a callback raises.
+
 See
 [`architecture/06_python_api_and_results.md`](architecture/06_python_api_and_results.md)
 for callback payload fields and exact result schemas.
@@ -215,13 +233,42 @@ and row context. The runtime does not silently sort or repair data.
 
 ### Local L2 CSV to Parquet/cache
 
+The normative source headers, persisted columns, and cache layout are in the
+[`L2 Python conversion contract`](contracts/01_l2_python_pipeline_contract.md).
+The manifest shape is also available as
+[`l2_dataset_manifest.schema.json`](contracts/l2_dataset_manifest.schema.json).
+In summary, conversion starts from exactly these named inputs:
+
+```text
+INPUT_DIR/
+  lob.csv
+  trades.csv
+```
+
+and publishes this dataset tree:
+
+```text
+OUTPUT_DIR/
+  manifest.json
+  schema_version=1/
+    instrument_id=<instrument_id>/
+      date=<YYYY-MM-DD>/
+        book_snapshots.parquet
+        trades.parquet
+        replay.l2cache
+```
+
+Pass `OUTPUT_DIR/manifest.json` to `backtest.run()`. Do not pass an individual
+Parquet or cache file. Parquet is the canonical inspection/analysis format;
+the runtime resolves its optimized cache files through the manifest.
+
 Install the locked development dependencies, then convert the immutable raw
 files with explicit instrument and source metadata:
 
 ```bash
 uv sync --locked
 uv run python scripts/convert_l2_csv.py \
-  data_trades data_normalized/l2_parquet \
+  INPUT_DIR OUTPUT_DIR \
   --dataset-id DATASET_ID \
   --instrument-id INSTRUMENT_ID \
   --symbol SYMBOL \
@@ -249,11 +296,110 @@ manifest is then explicitly diagnostic. The converter:
 - reopens and validates outputs, records hashes and throughput, and publishes
   the final directory atomically.
 
-Run the normalized dataset without supplying duplicate metadata:
+For the current `data_trades` files from earlier course tasks, provenance and
+market semantics are still unknown. The following is the command originally
+used for an explicitly unverified functional conversion; it does not invent a
+venue, symbol, exchange timestamp, trade-side meaning, or contract multiplier:
+
+```bash
+uv run python scripts/convert_l2_csv.py \
+  data_trades data_normalized/l2_parquet \
+  --dataset-id hw_previous_tasks_unverified \
+  --instrument-id 1 \
+  --timestamp-unit us \
+  --timestamp-semantics unknown \
+  --price-scale 10000000 \
+  --tick-size-ticks 1 \
+  --contract-multiplier 1 \
+  --trade-side-semantics unknown \
+  --same-timestamp-policy snapshot_first \
+  --allow-unverified-metadata
+```
+
+Here `price_scale=10_000_000` exactly preserves the observed seven decimal
+places. `tick_size_ticks=1`, `contract_multiplier=1`, and `instrument_id=1`
+are diagnostic internal values, not verified exchange metadata. The converter
+refuses to overwrite an existing output directory. For a repeat conversion,
+replace `data_normalized/l2_parquet` with a fresh output path, validate the new
+dataset, and then point replay at its `manifest.json`.
+
+Run a verified normalized dataset without supplying duplicate metadata:
 
 ```python
 result = backtest.run(strategy, "data_normalized/l2_parquet/manifest.json", DateRange())
 ```
+
+For an explicitly unverified diagnostic dataset, consent is a separate runtime
+flag and the result preserves the warning:
+
+```python
+result = backtest.run(
+    strategy,
+    "data_normalized/l2_parquet/manifest.json",
+    DateRange(),
+    BacktestConfig(allow_unverified_metadata=True),
+)
+assert result.dataset_id == "hw_previous_tasks_unverified"
+assert result.verified_metadata is False
+```
+
+Before starting replay threads, the runtime scans schema-v1 cache record
+headers and rejects manifest/cache disagreements in counts, bounds, dates, or
+global sequence continuity. It uses those verified bounds for `DateRange`
+pruning, then recomputes SHA-256 for every selected native cache file.
+The exact validation order, guarantees, cost, and remaining limitations are
+documented in
+[`architecture/12_l2_manifest_cache_validation.md`](architecture/12_l2_manifest_cache_validation.md).
+
+Run a bounded end-to-end smoke test that submits one order, receives a fill,
+and observes the resulting position through the direct pybind11 integration:
+
+```bash
+uv run python examples/run_local_l2.py \
+  --run-summary artifacts/local_l2_run_summary.json
+```
+
+Use `--duration-seconds N` to change the replay window. This example is a
+functional check, not evidence of economically correct PnL for the unidentified
+instrument.
+
+### Full local replay and audit
+
+The normalized local dataset currently contains 22,901,679 records across
+2024-08-01 through 2024-08-06. The interval from its first to last manifest
+timestamp fits in 518,400 seconds. Run the complete range and persist its audit
+summary with:
+
+```bash
+uv run --no-sync python examples/run_local_l2.py \
+  data_normalized/l2_parquet/manifest.json \
+  --duration-seconds 518400 \
+  --run-summary artifacts/l2_full_summary.json
+```
+
+This run performs all-cache index reconciliation before range pruning,
+SHA-256 verification of selected caches, deterministic scheduler replay, and
+one final atomic summary write. Validate the summary:
+
+```bash
+jq -e '
+  .status == "success"
+  and .error == null
+  and .source_audit.checks.read_accounting
+  and .source_audit.checks.replay_type_accounting
+  and .source_audit.checks.trade_callbacks_match_replayed_trades
+  and .source_audit.checks.l2_market_deliveries_match_replayed_records
+  and .source_audit.checks.sequence_span_matches_replayed_records
+  and .source_audit.checks.full_manifest_replay
+  and .source_audit.checks.full_manifest_counts_match
+' artifacts/l2_full_summary.json
+```
+
+Expected output is `true`. `book_update` callback count does not have to equal
+the snapshot count because unchanged visible top-N snapshots are filtered.
+Trade callbacks must equal replayed trade records. The rolling FNV-1a sequence
+digest is useful for repeat-run comparison but is not a substitute for the
+cache SHA-256 integrity checks.
 
 An L2 snapshot is one atomic aggregated-book replacement and one final quote
 signal. It never fabricates order IDs, queue position, or add/cancel history.

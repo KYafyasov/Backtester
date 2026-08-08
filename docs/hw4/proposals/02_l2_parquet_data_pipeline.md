@@ -410,20 +410,22 @@ flowchart LR
 
 Replay behavior:
 
-1. validate manifest, configuration, partition hashes, and schemas;
-2. select only partitions intersecting `DateRange`;
-3. open one bounded cursor for snapshots and one for trades;
-4. decode numeric columns in record batches outside the matching logic;
-5. merge the next rows using the stored deterministic key;
-6. warm historical state for rows strictly before the requested start;
-7. on an L2 snapshot, atomically replace that instrument's historical L2
+1. validate manifest and configuration;
+2. reconcile every schema-v1 cache's counts, exact bounds, UTC date, and
+   global sequence continuity with the manifest before trusting its index;
+3. select only partitions intersecting `DateRange` and verify their hashes;
+4. open one bounded cursor for snapshots and one for trades;
+5. decode numeric columns in record batches outside the matching logic;
+6. merge the next rows using the stored deterministic key;
+7. warm historical state for rows strictly before the requested start;
+8. on an L2 snapshot, atomically replace that instrument's historical L2
    levels and produce one final best-quote signal;
-8. on a trade, produce one trade price-cross signal and public trade view;
-9. schedule the resulting delivery using the existing latency and priority
+9. on a trade, produce one trade price-cross signal and public trade view;
+10. schedule the resulting delivery using the existing latency and priority
    rules;
-10. keep historical state stable until the trading thread acknowledges the
+11. keep historical state stable until the trading thread acknowledges the
     delivery through `processed_seq`;
-11. reuse batch buffers only after their published views are no longer live.
+12. reuse batch buffers only after their published views are no longer live.
 
 An L2 snapshot must not generate 50 intermediate quote signals. Its public and
 matching semantics are one atomic replacement with one final best bid/ask.
@@ -654,8 +656,9 @@ preserving Parquet as the canonical typed audit/analysis store. The converter
 writes a versioned little-endian replay cache beside every daily partition;
 `L2CacheReader` validates numeric headers and chronology and feeds the native
 scheduler without Python row calls. The manifest hashes every generated file;
-runtime currently validates the declared cache byte size, structure, and
-metadata but does not recompute SHA-256 on startup.
+runtime reconciles every cache's counts, exact bounds, UTC date, and global
+sequence continuity before range pruning, then recomputes SHA-256 for selected
+cache files before starting replay threads.
 
 ## 21. Proposed implementation phases
 
