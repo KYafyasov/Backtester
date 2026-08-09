@@ -81,17 +81,21 @@ enqueue until the Trading Engine publishes `processed_seq` for the delivery.
 New-order and cancel alternatives own complete command values; no side table is
 part of the contract.
 
-Each price-cross signal carries one raw source sequence. A book action records
-the best bid/ask immediately after that action; a trade records its price.
-Signals are strictly source-sequence ordered and belong to the delivery's
-instrument and timestamps.
+Each price-cross signal carries one raw source sequence and, for restricted
+multi-source replay, a source ID plus global market sequence. A book action
+records the best bid/ask immediately after that action; a trade records its
+price. Signals are strictly source-sequence ordered inside their atomic group
+and belong to the delivery's instrument and timestamps.
 
 `FillView.sequence` is the synthetic fill sequence. It is distinct from
 `FillView.trigger_source_sequence`, which is the raw quote/trade source row
-that won matching. `FillResultRow` and `fills_df` retain the same trigger
-sequence. For a quote already crossed when an order arrives,
+that won matching. `trigger_source_id` and
+`trigger_global_market_sequence` preserve its multi-source identity.
+`FillResultRow` and `fills_df` retain the same trigger provenance. For a quote
+already crossed when an order arrives,
 `trigger_source_sequence` is the latest raw book-action sequence retained by
-the historical book.
+the historical book; source/global trigger values are zero because that
+legacy touch path stores only book-local sequence provenance.
 
 A book callback fires after the complete atomic historical group (for example,
 Databento `F_LAST`) and only when the configured top-N view changed. The

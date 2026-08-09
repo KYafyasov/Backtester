@@ -36,7 +36,7 @@ they are not separate libraries.
 
 ```mermaid
 flowchart TB
-    DATA[("MBO JSONL")]
+    DATA[("MBO JSONL or L2 manifest/cache")]
 
     subgraph PYTHON["Python boundary"]
         direction LR
@@ -52,7 +52,7 @@ flowchart TB
 
     subgraph DISPATCHER["Dispatcher thread"]
         direction LR
-        READER["JsonlReader<br/>parse once"]
+        READER["JsonlReader / L2CacheReader<br/>decode once"]
         SOURCE["Scheduled source<br/>atomic groups"]
         BOOKS[("HistoricalLOBStore<br/>single writer")]
         SCHED["Scheduler<br/>stable timeline"]
@@ -109,7 +109,7 @@ ordering within the market-delivery and order/cancel paths.
 ```text
 src/
   core/        dependency-free public contracts
-  market/      typed JSONL ingestion and historical L3 books
+  market/      typed JSONL/L2-cache ingestion and historical L3/L2 books
   scheduler/   event ordering, SPSC queues, ready barrier, thread runtime
   trading/     private orders, matching, callbacks, positions
   results/     columnar result storage and PnL
@@ -146,10 +146,15 @@ or matching logic.
 Owns input parsing and shared historical state:
 
 - `JsonlReader` streams and validates physical JSONL rows.
+- `L2CacheReader` validates the dataset manifest and metadata, reconciles every
+  cache's counts/bounds/date and global sequence continuity before range
+  pruning, verifies selected cache hashes, and then streams numeric records.
 - `Parsing` converts timestamps and decimal prices once into native integers.
 - `LimitOrderBook` reconstructs per-instrument L3 state and exposes ordered
   historical slices and top-N aggregated levels.
 - `HistoricalLOBStore` routes events to one book per instrument.
+- `HistoricalL2Book` atomically replaces ordered aggregated snapshot levels;
+  it has no exchange order IDs or L3 liquidity surface.
 
 Malformed rows, unsupported values, source chronology regression, and corrupt
 L3 actions raise typed errors. The reader does not load or sort the full replay.
@@ -159,8 +164,11 @@ L3 actions raise typed errors. The reader does not load or sort the full replay.
 Owns deterministic time ordering and thread synchronization:
 
 - `ChronologicalScheduler` is the bounded pending-command heap.
-- `SchedulerRuntime` merges one prefetched market group with delayed commands,
-  starts the dispatcher and consumer threads, and propagates failures.
+- `NWayMarketMerger` optionally selects one prefetched head from each strict
+  L2 child source before `SchedulerRuntime` merges the winner with delayed
+  commands.
+- `SchedulerRuntime` starts the dispatcher and consumer threads and propagates
+  failures.
 - `SpscRing` carries events and commands with documented acquire/release
   publication.
 - `ReadyBarrier` carries the atomic processed sequence.
@@ -191,9 +199,17 @@ It creates no pandas or Python objects in the native event loop.
 
 ### `src/runtime`
 
-`run_backtest()` validates configuration and instrument metadata, constructs
-the books, recorder, trading engine, streaming scheduled source, and scheduler,
-then freezes results after the threads join.
+`run_backtest()` validates configuration and instrument metadata, detects an
+L2 dataset manifest or the compatible JSONL path, captures L2 dataset
+provenance, constructs the books, recorder, trading engine, streaming scheduled
+source, and scheduler, then freezes results after the threads join. L2 source
+construction completes the manifest/cache preflight before worker threads
+start.
+
+A `cmf-multi-source-v1` path is parsed as a strict flat parent manifest. The
+runtime validates child manifest hashes/counts/bounds and disjoint ownership,
+then composes L2 leaves through the restricted N-way merger. See
+[`13_restricted_nway_event_merger.md`](13_restricted_nway_event_merger.md).
 
 `discover_databento_instruments()` is the optional metadata discovery pass used
 by the minimal three-argument Python API.
@@ -206,7 +222,8 @@ The `_backtester` pybind11 module:
 - adapts Python Strategy methods to the native `Strategy` interface;
 - activates the Strategy context only during a callback;
 - releases the GIL for the native run and reacquires it per callback;
-- exposes frozen native columns through NumPy-backed pandas objects.
+- exposes frozen native columns through NumPy-backed pandas objects;
+- optionally publishes one atomic JSON run summary after success or failure.
 
 The pure-Python package `python/back_tester/__init__.py` re-exports the module
 and supplies the documented `backtest.run` namespace.

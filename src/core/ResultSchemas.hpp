@@ -15,6 +15,8 @@ struct FillResultRow {
   Quantity remaining_quantity{};
   LiquiditySource liquidity_source{LiquiditySource::HistoricalDisplayed};
   Sequence trigger_source_sequence{};
+  SourceId trigger_source_id{};
+  Sequence trigger_global_market_sequence{};
 };
 
 struct OrderLogResultRow {

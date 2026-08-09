@@ -212,6 +212,8 @@ def test_real_submission_delayed_fill_state_and_bulk_results(tmp_path):
         "remaining_quantity",
         "liquidity_source",
         "trigger_source_sequence",
+        "trigger_source_id",
+        "trigger_global_market_sequence",
     ]
     assert fills.dtypes.astype(str).tolist() == [
         "int64",
@@ -224,9 +226,13 @@ def test_real_submission_delayed_fill_state_and_bulk_results(tmp_path):
         "int64",
         "uint8",
         "uint64",
+        "uint32",
+        "uint64",
     ]
     assert result.pnl_series.index.dtype == np.dtype("int64")
     assert result.pnl_series.dtype == np.dtype("float64")
+    assert result.dataset_id is None
+    assert result.verified_metadata is None
 
     retained = fills["quantity"].to_numpy(copy=False)
     assert not retained.flags.owndata
@@ -234,6 +240,147 @@ def test_real_submission_delayed_fill_state_and_bulk_results(tmp_path):
     del result, fills
     gc.collect()
     assert retained.tolist() == [6]
+
+
+def test_optional_run_summary_is_written_atomically_after_success(tmp_path):
+    path = write_rows(
+        tmp_path,
+        [
+            row(1, side="B", price="99", size=8, flags=0, order_id=10),
+            row(2, side="A", price="101", size=4, order_id=11),
+        ],
+    )
+
+    class Buy(bt.Strategy):
+        def on_book_update(self, update):
+            self.submit_limit(update.instrument_id, bt.Side.BUY, 101_000_000_000, 1)
+
+    summary_path = tmp_path / "diagnostics" / "run_summary.json"
+    result = bt.run(
+        Buy(),
+        str(path),
+        bt.DateRange(),
+        bt.BacktestConfig(order_latency_ns=5, book_depth=1),
+        metadata(1),
+        run_summary_path=str(summary_path),
+    )
+
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["schema_version"] == 1
+    assert summary["status"] == "success"
+    assert summary["data_path"] == str(path)
+    assert summary["dataset_id"] is None
+    assert summary["verified_metadata"] is None
+    assert summary["date_range"] == {
+        "start_ts_ns": -(2**63),
+        "end_ts_ns": 2**63 - 1,
+    }
+    assert summary["config"] == {
+        "market_data_latency_ns": 0,
+        "order_latency_ns": 5,
+        "book_depth": 1,
+        "allow_unverified_metadata": False,
+    }
+    assert summary["instruments"] == [
+        {
+            "instrument_id": 1,
+            "tick_size_ticks": 1,
+            "price_scale": 1_000_000_000,
+            "contract_multiplier": 1,
+        }
+    ]
+    assert summary["counts"] == {
+        "scheduled_events": 2,
+        "market_deliveries": 1,
+        "new_order_arrivals": 1,
+        "cancel_arrivals": 0,
+        "source_trade_events": 0,
+        "callbacks": {"book_update": 1, "trade": 0, "fill": 1, "reject": 0},
+        "fills": 1,
+        "order_log_rows": 3,
+        "pnl_points": 1,
+    }
+    assert summary["source_audit"] == {
+        "input_format": "mbo_jsonl",
+        "records_read": 2,
+        "records_warmed": 0,
+        "records_replayed": 2,
+        "records_after_end": 0,
+        "replayed_book_records": 2,
+        "replayed_trade_records": 0,
+        "first_replayed_sequence": 1,
+        "last_replayed_sequence": 2,
+        "replayed_sequence_digest_fnv1a64": summary["source_audit"][
+            "replayed_sequence_digest_fnv1a64"
+        ],
+        "manifest_records": None,
+        "multi_source": None,
+        "checks": {
+            "read_accounting": True,
+            "replay_type_accounting": True,
+            "trade_callbacks_match_replayed_trades": True,
+            "l2_market_deliveries_match_replayed_records": None,
+            "sequence_span_matches_replayed_records": True,
+            "full_manifest_replay": False,
+            "full_manifest_counts_match": None,
+        },
+    }
+    assert len(summary["source_audit"]["replayed_sequence_digest_fnv1a64"]) == 16
+    assert summary["duration_ns"] > 0
+    assert summary["error"] is None
+    assert len(result.fills_df) == 1
+    assert not summary_path.with_name("run_summary.json.tmp").exists()
+
+
+def test_run_summary_records_failure_without_masking_callback_error(tmp_path):
+    path = write_rows(tmp_path, [row(1)])
+    summary_path = tmp_path / "failed_run.json"
+
+    class Failing(bt.Strategy):
+        def on_book_update(self, update):
+            raise LookupError("summary callback failure")
+
+    with pytest.raises(LookupError, match="summary callback failure"):
+        bt.run(
+            Failing(),
+            str(path),
+            bt.DateRange(),
+            None,
+            metadata(1),
+            run_summary_path=str(summary_path),
+        )
+
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["status"] == "failed"
+    assert summary["counts"]["scheduled_events"] == 1
+    assert summary["counts"]["market_deliveries"] == 1
+    assert summary["counts"]["callbacks"] == {
+        "book_update": 1,
+        "trade": 0,
+        "fill": 0,
+        "reject": 0,
+    }
+    assert summary["counts"]["fills"] is None
+    assert summary["counts"]["order_log_rows"] is None
+    assert summary["counts"]["pnl_points"] is None
+    assert summary["source_audit"]["records_read"] == 1
+    assert summary["source_audit"]["records_replayed"] == 1
+    assert summary["source_audit"]["first_replayed_sequence"] == 1
+    assert summary["source_audit"]["last_replayed_sequence"] == 1
+    assert "summary callback failure" in summary["error"]["message"]
+
+
+def test_empty_run_summary_path_is_rejected_before_replay(tmp_path):
+    path = write_rows(tmp_path, [row(1)])
+    with pytest.raises(ValueError, match="run_summary_path must not be empty"):
+        bt.run(
+            bt.Strategy(),
+            str(path),
+            bt.DateRange(),
+            None,
+            metadata(1),
+            run_summary_path="",
+        )
 
 
 def test_three_argument_fallback_discovers_ids_and_uses_positive_latency(tmp_path):

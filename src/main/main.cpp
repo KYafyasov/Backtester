@@ -1,11 +1,8 @@
 #include "DataIngestionLayer.hpp"
-#include "common/BasicTypes.hpp"
 
 #include <exception>
 #include <iostream>
 #include <string>
-
-using namespace cmf;
 
 int main(int argc, const char *argv[]) {
   if (argc != 2) {

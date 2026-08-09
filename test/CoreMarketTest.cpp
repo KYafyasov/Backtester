@@ -5,12 +5,14 @@
 #include "MiniTest.hpp"
 #include "TempFile.hpp"
 
+#include <array>
 #include <fstream>
 #include <string>
 #include <vector>
 
 namespace {
 
+using cmf::BookLevel;
 using cmf::InstrumentMeta;
 using cmf::Side;
 using cmf::market::BookError;
@@ -507,6 +509,45 @@ TEST_CASE("HistoricalLOBStore isolates instruments", "[CoreMarket]") {
   REQUIRE(ids.size() == 2);
   REQUIRE(ids[0] == 11);
   REQUIRE(ids[1] == 22);
+}
+
+TEST_CASE("HistoricalLOBStore replaces L2 snapshots without fabricating L3",
+          "[CoreMarket]") {
+  HistoricalLOBStore store;
+  const std::array bids{BookLevel{100, 4}, BookLevel{99, 5}};
+  const std::array asks{BookLevel{101, 6}, BookLevel{102, 7}};
+
+  store.replace_snapshot(33, bids, asks, 10);
+
+  REQUIRE(store.size() == 1);
+  REQUIRE(store.find(33) == nullptr);
+  REQUIRE(store.best_bid(33)->price == 100);
+  REQUIRE(store.best_ask(33)->quantity == 6);
+  REQUIRE(store.last_book_source_sequence(33) == 10);
+  std::vector<BookLevel> levels;
+  store.write_top_bids(33, 1, levels);
+  REQUIRE(levels.size() == 1);
+  REQUIRE(levels.front().quantity == 4);
+
+  const std::array replacement_bids{BookLevel{98, 8}};
+  const std::array replacement_asks{BookLevel{103, 9}};
+  store.replace_snapshot(33, replacement_bids, replacement_asks, 11);
+  REQUIRE(store.best_bid(33)->price == 98);
+  REQUIRE(store.best_ask(33)->price == 103);
+}
+
+TEST_CASE("Historical L2 rejects invalid ordering and L3 mixing",
+          "[CoreMarket]") {
+  HistoricalLOBStore store;
+  const std::array invalid_bids{BookLevel{99, 1}, BookLevel{100, 1}};
+  const std::array asks{BookLevel{101, 1}};
+  REQUIRE(throws_book_error(
+      [&] { store.replace_snapshot(1, invalid_bids, asks, 1); }));
+
+  const std::array bids{BookLevel{99, 1}};
+  store.replace_snapshot(1, bids, asks, 1);
+  REQUIRE(throws_book_error(
+      [&] { store.apply(event(MarketAction::Add, 10, Side::Buy, 98, 1, 1)); }));
 }
 
 TEST_CASE("JSONL reader consumes a generated source incrementally",

@@ -10,6 +10,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
 
 namespace cmf::results {
 
@@ -31,6 +32,11 @@ struct PositionStorageStats {
   std::size_t runtime_reallocations{};
 };
 
+struct DatasetMetadata {
+  std::string dataset_id;
+  bool verified_metadata{};
+};
+
 struct FillColumnsView {
   std::span<const TimestampNs> exchange_ts_ns;
   std::span<const TimestampNs> engine_ts_ns;
@@ -42,6 +48,8 @@ struct FillColumnsView {
   std::span<const Quantity> remaining_quantity;
   std::span<const LiquiditySource> liquidity_source;
   std::span<const Sequence> trigger_source_sequence;
+  std::span<const SourceId> trigger_source_id;
+  std::span<const Sequence> trigger_global_market_sequence;
 
   [[nodiscard]] std::size_t size() const noexcept {
     return exchange_ts_ns.size();
@@ -87,6 +95,8 @@ public:
   [[nodiscard]] PnlColumnsView pnl() const noexcept;
   [[nodiscard]] std::span<const AccountCurrencyAmount>
   exact_pnl() const noexcept;
+  [[nodiscard]] const std::optional<DatasetMetadata> &
+  dataset_metadata() const noexcept;
 
   [[nodiscard]] explicit operator bool() const noexcept {
     return static_cast<bool>(storage_);
@@ -104,8 +114,10 @@ private:
 
 class ResultRecorder final : public trading::Recorder {
 public:
-  ResultRecorder(std::span<const InstrumentMeta> instruments,
-                 ResultReserveEstimate estimate = {});
+  ResultRecorder(
+      std::span<const InstrumentMeta> instruments,
+      ResultReserveEstimate estimate = {},
+      std::optional<DatasetMetadata> dataset_metadata = std::nullopt);
   ~ResultRecorder() override;
 
   void on_order_event(const OrderLogResultRow &row) override;

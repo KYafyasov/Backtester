@@ -18,6 +18,7 @@ struct BacktestConfig {
   TimestampNs market_data_latency_ns{};
   TimestampNs order_latency_ns{};
   std::uint32_t book_depth{15};
+  bool allow_unverified_metadata{};
 };
 
 struct DateRange {

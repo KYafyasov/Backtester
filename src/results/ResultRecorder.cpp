@@ -132,6 +132,8 @@ public:
     std::vector<Quantity> remaining_quantity;
     std::vector<LiquiditySource> liquidity_source;
     std::vector<Sequence> trigger_source_sequence;
+    std::vector<SourceId> trigger_source_id;
+    std::vector<Sequence> trigger_global_market_sequence;
   } fills;
 
   struct OrderColumns {
@@ -153,6 +155,8 @@ public:
     std::vector<AccountCurrencyAmount> exact_total;
     std::vector<double> total_pnl;
   } pnl;
+
+  std::optional<DatasetMetadata> dataset_metadata;
 
   bool frozen{};
 };
@@ -179,8 +183,13 @@ public:
   };
 
   Impl(std::span<const InstrumentMeta> instruments,
-       ResultReserveEstimate estimate)
+       ResultReserveEstimate estimate,
+       std::optional<DatasetMetadata> dataset_metadata)
       : storage(std::make_shared<FrozenResults::Storage>()) {
+    if (dataset_metadata.has_value() && dataset_metadata->dataset_id.empty()) {
+      throw std::invalid_argument("dataset id must not be empty");
+    }
+    storage->dataset_metadata = std::move(dataset_metadata);
     for (const auto &meta : instruments) {
       if (meta.instrument_id <= 0 || meta.tick_size_ticks <= 0 ||
           meta.price_scale <= 0 || meta.contract_multiplier <= 0) {
@@ -222,6 +231,8 @@ public:
     c.remaining_quantity.reserve(count);
     c.liquidity_source.reserve(count);
     c.trigger_source_sequence.reserve(count);
+    c.trigger_source_id.reserve(count);
+    c.trigger_global_market_sequence.reserve(count);
   }
 
   void reserve_orders(std::size_t count) {
@@ -328,7 +339,9 @@ FillColumnsView FrozenResults::fills() const noexcept {
           c.quantity,
           c.remaining_quantity,
           c.liquidity_source,
-          c.trigger_source_sequence};
+          c.trigger_source_sequence,
+          c.trigger_source_id,
+          c.trigger_global_market_sequence};
 }
 
 OrderLogColumnsView FrozenResults::order_log() const noexcept {
@@ -356,9 +369,17 @@ FrozenResults::exact_pnl() const noexcept {
              : std::span<const AccountCurrencyAmount>{};
 }
 
+const std::optional<DatasetMetadata> &
+FrozenResults::dataset_metadata() const noexcept {
+  static const std::optional<DatasetMetadata> empty;
+  return storage_ ? storage_->dataset_metadata : empty;
+}
+
 ResultRecorder::ResultRecorder(std::span<const InstrumentMeta> instruments,
-                               ResultReserveEstimate estimate)
-    : impl_(std::make_unique<Impl>(instruments, estimate)) {}
+                               ResultReserveEstimate estimate,
+                               std::optional<DatasetMetadata> dataset_metadata)
+    : impl_(std::make_unique<Impl>(instruments, estimate,
+                                   std::move(dataset_metadata))) {}
 
 ResultRecorder::~ResultRecorder() = default;
 
@@ -445,7 +466,8 @@ void ResultRecorder::on_fill(const FillResultRow &row) {
   reserve_row(c.exchange_ts_ns, c.engine_ts_ns, c.instrument_id,
               c.client_order_id, c.side, c.price_ticks, c.quantity,
               c.remaining_quantity, c.liquidity_source,
-              c.trigger_source_sequence);
+              c.trigger_source_sequence, c.trigger_source_id,
+              c.trigger_global_market_sequence);
   impl_->prepare_pnl_append(row.engine_ts_ns);
   const std::size_t old_lot_capacity = ledger.lots.capacity();
   if (append_lot) {
@@ -486,6 +508,9 @@ void ResultRecorder::on_fill(const FillResultRow &row) {
   c.remaining_quantity.push_back(row.remaining_quantity);
   c.liquidity_source.push_back(row.liquidity_source);
   c.trigger_source_sequence.push_back(row.trigger_source_sequence);
+  c.trigger_source_id.push_back(row.trigger_source_id);
+  c.trigger_global_market_sequence.push_back(
+      row.trigger_global_market_sequence);
   impl_->commit_pnl(row.engine_ts_ns, aggregate);
 }
 

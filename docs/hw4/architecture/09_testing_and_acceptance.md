@@ -17,6 +17,10 @@ The `back-tester-tests` executable covers:
 - rejects, order transitions, positions, exact PnL, buffer ownership, and
   deterministic repeated runs;
 - complete runtime composition from a temporary JSONL source.
+- atomic L2 snapshot replacement and rejection of invalid/mixed L2/L3 state.
+- restricted N-way key ordering, compatible timestamp semantics, globally
+  ordered selected warm-up, full winner-identity lifecycle checks,
+  selected-record conservation/full-replay audit, and global sequences.
 
 CTest also verifies CLI usage and valid/invalid checked-in fixtures.
 
@@ -32,6 +36,15 @@ CTest also verifies CLI usage and valid/invalid checked-in fixtures.
 - the real two-instrument end-to-end strategy;
 - deterministic repeated results;
 - benchmark output contracts.
+- exact CSV conversion, typed Parquet/cache/manifest output, unverified
+  metadata rejection/opt-in and result provenance;
+- public L2 replay callbacks/fills, both equal-time policies, snapshot warm-up,
+  selected SHA enforcement, same-size corruption, and adversarial manifest
+  counts, timestamp/sequence bounds, dates, and aggregate/source totals.
+- atomic success/failure run summaries, source accounting, callback counts,
+  full-manifest L2 reconciliation, sequence bounds, and deterministic digest.
+- strict multi-source parent validation, incompatible timestamp rejection,
+  fill provenance, ranged/full-replay audit, and 20-fold deterministic replay.
 
 ### Sanitizers
 
@@ -90,6 +103,10 @@ The test suite locks the following system behavior:
 - Python failures cannot strand a queue or barrier;
 - returned result objects retain immutable native storage;
 - repeated normalized runs produce identical order/fill ordering.
+- L2 manifest bounds cannot prune data until every cache index has been
+  reconciled, and selected cache hashes pass before worker threads start.
+- a successful full-range L2 summary reconciles replayed snapshot/trade totals
+  with the validated manifest and one market delivery per cache record.
 
 ## Runnable demonstration
 

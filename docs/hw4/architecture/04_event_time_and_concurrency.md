@@ -53,6 +53,21 @@ it may not change the key or priority. Thus a command ordered before a
 prefetched market group sees the old book, while equal-time market data still
 wins by the standard priority rule.
 
+For the optional restricted multi-source path, `NWayMarketMerger` keeps one
+staged group per leaf and compares leaf-global keys in this order:
+
+```text
+event_ts_ns, source_priority, source_id, source_local_group_sequence
+```
+
+Only the winning leaf is prepared. It remains the current winner until the
+Trading Engine acknowledges the delivery, after which that leaf alone may be
+advanced. This preserves the same buffer-lifetime and shared-book rules as the
+single-source path. Before the requested start time, every pre-range group in
+the selected warm-up suffixes is advanced through this same ordering rule;
+warming leaves independently would produce incorrect state when their
+timestamps interleave.
+
 While applying the group row by row, preparation also materializes an ordered
 `PriceCrossSignal` span:
 
@@ -65,8 +80,10 @@ The Trading Engine replays that span in raw source order. The first qualifying
 signal fills an eligible order, so a trade before a quote transition can win
 inside one atomic group and vice versa. Historical quote/trade size is not part
 of the predicate or fill quantity. The winning raw source sequence is copied
-into `SyntheticFill`, `FillView`, and `FillResultRow`; it is distinct from the
-synthetic fill sequence.
+into `SyntheticFill`, `FillView`, and `FillResultRow`; for multi-source replay,
+the source ID and global market sequence are copied with it. These provenance
+fields are distinct from the synthetic fill sequence and Scheduler dispatch
+sequence.
 
 A `Trade` callback may be published in the same high-level engine event as a
 book update. The callback order is:
@@ -183,3 +200,9 @@ Never detach threads. Never suppress the original exception behind a shutdown ti
 ## 9. Determinism requirements
 
 The same input, config, and strategy must produce byte-equivalent order/fill ordering across repeated runs on the same build. Tests must repeat representative runs at least 20 times and compare normalized results.
+
+The restricted multi-source path additionally requires stable source IDs and
+priorities, disjoint book ownership, contiguous global market sequences, and a
+replay digest over source identity, local sequence, timestamp, event kind, and
+instrument. The complete contract is in
+[`13_restricted_nway_event_merger.md`](13_restricted_nway_event_merger.md).

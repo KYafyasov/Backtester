@@ -11,6 +11,30 @@ using InstrumentId = std::int64_t;
 using ClOrdId = std::uint64_t;
 using ExchangeOrderId = std::uint64_t;
 using Sequence = std::uint64_t;
+using SourceId = std::uint32_t;
+using SourcePriority = std::uint32_t;
+
+enum class TimestampSemantics : std::uint8_t {
+  Exchange = 1,
+  Receive = 2,
+  LocalReceive = 3,
+  Unknown = 4,
+};
+
+[[nodiscard]] inline constexpr const char *
+timestamp_semantics_name(TimestampSemantics semantics) noexcept {
+  switch (semantics) {
+  case TimestampSemantics::Exchange:
+    return "exchange";
+  case TimestampSemantics::Receive:
+    return "receive";
+  case TimestampSemantics::LocalReceive:
+    return "local_receive";
+  case TimestampSemantics::Unknown:
+    return "unknown";
+  }
+  return "unknown";
+}
 
 struct AccountCurrencyAmount {
   std::int64_t numerator{};

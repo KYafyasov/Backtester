@@ -2,6 +2,7 @@
 
 #include "core/BacktestConfig.hpp"
 #include "core/Events.hpp"
+#include "market/HistoricalLOBStore.hpp"
 #include "market/LimitOrderBook.hpp"
 
 #include <map>
@@ -23,6 +24,8 @@ struct SyntheticFill {
   Quantity quantity{};
   LiquiditySource liquidity_source{LiquiditySource::HistoricalDisplayed};
   Sequence trigger_source_sequence{};
+  SourceId trigger_source_id{};
+  Sequence trigger_global_market_sequence{};
 };
 
 // The typed private overlay. It owns only this engine's resting orders; the
@@ -81,6 +84,12 @@ public:
          Sequence arrival_sequence, const market::LimitOrderBook *book);
 
   [[nodiscard]] std::span<const SyntheticFill>
+  accept_from_store(ClOrdId client_order_id, InstrumentId instrument_id,
+                    Side side, PriceTicks limit_price,
+                    Quantity remaining_quantity, Sequence arrival_sequence,
+                    const market::HistoricalLOBStore *books);
+
+  [[nodiscard]] std::span<const SyntheticFill>
   on_signal(const PriceCrossSignal &signal);
 
   void cancel(ClOrdId client_order_id);
@@ -92,9 +101,16 @@ private:
                     std::optional<PriceTicks> buy_trigger,
                     std::optional<PriceTicks> sell_trigger,
                     LiquiditySource liquidity_source,
-                    Sequence trigger_source_sequence);
+                    Sequence trigger_source_sequence,
+                    SourceId trigger_source_id = 0,
+                    Sequence trigger_global_market_sequence = 0);
   void insert_resting(const EngineView::PrivateOrder &order);
   void erase_resting(const EngineView::PrivateOrder &order);
+  [[nodiscard]] std::span<const SyntheticFill> accept_with_touch(
+      ClOrdId client_order_id, InstrumentId instrument_id, Side side,
+      PriceTicks limit_price, Quantity remaining_quantity,
+      Sequence arrival_sequence, std::optional<PriceTicks> best_bid,
+      std::optional<PriceTicks> best_ask, Sequence source_sequence);
 
   EngineView view_;
   std::vector<SyntheticFill> fills_;

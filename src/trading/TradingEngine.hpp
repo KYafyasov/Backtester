@@ -63,7 +63,9 @@ private:
                    TimestampNs exchange_ts_ns);
   void apply_fill(OwnOrder &order, PriceTicks price, Quantity quantity,
                   TimestampNs exchange_ts_ns, LiquiditySource liquidity_source,
-                  Sequence trigger_source_sequence);
+                  Sequence trigger_source_sequence,
+                  SourceId trigger_source_id = 0,
+                  Sequence trigger_global_market_sequence = 0);
   void emit_order_event(const OwnOrder &order, OrderLogEventType event_type,
                         RejectReason reason = RejectReason::None);
   void emit_reject(InstrumentId instrument_id, ClOrdId client_order_id,

@@ -11,6 +11,13 @@ then removes avoidable allocation and conversion from the event path.
   values.
 - The reader streams physical rows and stages one atomic group; it does not
   load and sort the full file.
+- The optional flat N-way merger retains one staged head per source and uses a
+  fixed-capacity binary heap. Selection and winner replacement are `O(log N)`;
+  head and heap capacity is reserved during initialization. A dedicated
+  allocation test is still required before claiming zero per-event allocation.
+- The offline L2 converter parses CSV in bounded batches, writes Zstandard
+  Parquet plus a compact little-endian replay cache, and records conversion
+  throughput in the manifest. Runtime decodes only numeric cache records.
 - Matching compares typed quote/trade trigger prices against the best eligible
   private order and does not traverse historical displayed volume.
 - Resting private orders use price-time ordered maps.
@@ -27,6 +34,13 @@ ordered containers. Matching removes crossed private orders from the best price
 forward in deterministic price-time order. Custom allocators, SIMD, and custom
 trees are intentionally absent because the measured course-project workload
 does not justify their complexity.
+
+Multi-source startup intentionally pays strict validation cost before worker
+threads start: the parent manifest hash and size for every child are checked,
+then each child manifest performs its existing cache SHA/count/bounds preflight.
+This is integrity work outside the replay hot path. The current benchmark suite
+does not yet publish a dedicated scaling curve for 2/4/8/16 sources; add that
+measurement before claiming a performance advantage over offline pre-merge.
 
 ## Ready-signal round-trip benchmark
 
@@ -82,6 +96,28 @@ region.
 
 The totals are unadjusted. A side-effect-free native empty loop is not
 subtracted because an optimizing Release compiler can eliminate it.
+
+## L2 conversion and replay benchmark
+
+Every conversion writes rows, elapsed time, rows/s, and input/output bytes to
+`manifest.json`. End-to-end replay is measured with:
+
+```bash
+uv run python scripts/benchmark_l2_replay.py \
+  data_normalized/l2_parquet/manifest.json
+```
+
+This includes cache decoding, scheduling, historical snapshot replacement,
+callbacks to a no-op Python strategy, acknowledgements, and result freezing.
+
+Schema-v1 runtime also performs one payload-skipping metadata scan of every
+cache before range pruning because the cache header has no authenticated
+counts/bounds footer. On the current six-partition, 22,901,679-event dataset,
+the bounded 10-second smoke took 5.29 seconds after preflight versus 1.63
+seconds before it on the same development machine. This fixed correctness cost
+is separate from the number of events inside the requested range. Details and
+the future-version trade-off are in
+[`12_l2_manifest_cache_validation.md`](12_l2_manifest_cache_validation.md).
 
 ## Interpreting results
 

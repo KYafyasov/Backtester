@@ -5,7 +5,7 @@
 ```mermaid
 flowchart LR
     USER["Python strategy"]
-    DATA["Databento-like MBO JSONL"]
+    DATA["MBO JSONL or L2 dataset manifest"]
     API["backtest.run"]
     NATIVE["Native C++ runtime"]
     RESULT["Result<br/>fills, order log, PnL"]
@@ -34,9 +34,9 @@ flowchart TB
 
     subgraph NATIVE["Native runtime"]
         subgraph DISPATCHER["Dispatcher thread"]
-            READER["JsonlReader"]
-            SOURCE["JsonlScheduledSource"]
-            BOOKS["HistoricalLOBStore"]
+            READER["JsonlReader or L2CacheReader"]
+            SOURCE["JSONL or L2 scheduled source"]
+            BOOKS["HistoricalLOBStore<br/>L3 or honest L2 state"]
             SCHED["ChronologicalScheduler"]
 
             READER --> SOURCE
@@ -74,11 +74,17 @@ flowchart TB
 binding releases the GIL around the native run. The trading thread reacquires
 the GIL only while calling a Python strategy method.
 
+For L2 input, source construction first performs the manifest/cache preflight
+on the caller thread. Counts, bounds, UTC dates, and global sequence continuity
+are reconciled before `DateRange` pruning, and selected hashes are checked
+before `SchedulerRuntime::run()` may start either worker thread. See
+[`12_l2_manifest_cache_validation.md`](12_l2_manifest_cache_validation.md).
+
 ## Ownership
 
 | State | Writer | Read access |
 |---|---|---|
-| JSONL reader and staged atomic group | Dispatcher thread | Dispatcher only |
+| Physical reader and staged MBO group or L2 row | Dispatcher thread | Dispatcher only |
 | `HistoricalLOBStore` | Dispatcher thread | Trading thread while dispatcher waits for acknowledgement |
 | Scheduler heap and source merge state | Dispatcher thread | Dispatcher only |
 | Event ring | Dispatcher producer | Trading consumer |

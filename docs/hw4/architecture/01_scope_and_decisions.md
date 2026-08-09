@@ -15,9 +15,17 @@ It is a backtester, not an exchange emulator or a complete options risk system.
 - One OS process.
 - One dispatcher thread and one trading-engine consumer thread.
 - Multiple instruments in one replay.
-- Databento-like MBO JSONL input.
+- Optional strict flat N-way merge of L2 child manifests with disjoint
+  `instrument_id` ownership.
+- Databento-like MBO JSONL input, plus manifest-selected L2 replay caches
+  generated beside canonical daily Parquet partitions.
+- Pre-thread L2 manifest/cache reconciliation: counts, exact bounds, UTC
+  partition dates, and global sequence continuity are validated before
+  `DateRange` pruning; selected cache SHA-256 values are then verified.
 - Streaming, fail-fast parsing into numeric native types.
 - A per-instrument historical L3 book.
+- A separate aggregated L2 snapshot book; one run never mixes L2 and L3 state
+  for an instrument.
 - One private `EngineView` owned by the typed `SimulatedLOB`.
 - Fixed market-data latency and strictly positive fixed order latency.
 - Limit GTC orders, full fills on price cross, resting orders, and cancel.
@@ -27,6 +35,8 @@ It is a backtester, not an exchange emulator or a complete options risk system.
 - Per-instrument positions, contract multipliers, FIFO realized PnL, and
   midpoint marking.
 - Native columnar result buffers exposed as pandas DataFrames and a Series.
+- Optional atomic `run_summary.json` with replay audit counters, callback/result
+  counts, configuration, duration, provenance, and failure text.
 - Native, Python, end-to-end, determinism, sanitizer, and benchmark coverage.
 
 Every strategy-facing event, order, position, and result row carries a numeric
@@ -136,6 +146,12 @@ is not produced by the full-fill-on-cross matcher.
 - No self-matching between private strategy orders.
 - No exercise, assignment, expiration settlement, Greeks, volatility surface,
   or complete options risk engine.
-- No Feather input, database, persistence layer, UI, or generic plugin system.
+- No direct Feather input, database, UI, or generic plugin system. Parquet is
+  produced offline for typed local persistence; runtime reads the versioned
+  native cache referenced by its manifest.
+- No overlapping source ownership, multi-venue consolidated book, mixed
+  L2/L3 merge, wrapped JSONL child, or public nested multi-source manifest.
 - The shipped runtime has one trading `EngineView`; isolation between typed
   `SimulatedLOB` instances is tested but is not exposed by `backtest.run()`.
+- No per-event file logging, log rotation, distributed tracing, or telemetry
+  exporter. Run summaries are opt-in and written once outside the hot path.

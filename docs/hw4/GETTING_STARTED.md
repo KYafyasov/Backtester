@@ -118,6 +118,24 @@ The returned `Result` contains:
 - `order_log_df`;
 - `pnl_series`.
 
+For an auditable run, pass an optional summary path. No log file is created by
+default:
+
+```python
+result = backtest.run(
+    strategy,
+    path,
+    date_range,
+    config,
+    instruments,
+    run_summary_path="artifacts/run_summary.json",
+)
+```
+
+The JSON records effective parameters, duration, source/replay/callback/result
+counts, L2 manifest totals, sequence bounds and a rolling sequence fingerprint.
+It is also written with `status="failed"` when replay or a callback raises.
+
 See
 [`architecture/06_python_api_and_results.md`](architecture/06_python_api_and_results.md)
 for callback payload fields and exact result schemas.
@@ -184,7 +202,13 @@ All metadata values must be positive, instrument IDs must be unique, and every
 instrument in the input must have metadata. Strategy prices are integer
 `price_ticks`, not floating-point currency values.
 
-## 6. Input data contract
+## 6. Input data contracts
+
+The path passed to `backtest.run()` may be an MBO JSONL file or an L2 dataset
+`manifest.json`. Both become the same typed scheduler/callback contract; they
+retain different market semantics.
+
+### MBO JSONL
 
 The runtime reads one JSON object per line in Databento-like MBO order. The
 checked-in [`test/data/tiny_mbo.jsonl`](../../test/data/tiny_mbo.jsonl) fixture
@@ -207,6 +231,209 @@ timestamp or sequence regressions, incomplete atomic groups, unsupported
 values, unrepresentable prices, and unknown instruments fail the run with file
 and row context. The runtime does not silently sort or repair data.
 
+### Local L2 CSV to Parquet/cache
+
+The normative source headers, persisted columns, and cache layout are in the
+[`L2 Python conversion contract`](contracts/01_l2_python_pipeline_contract.md).
+The manifest shape is also available as
+[`l2_dataset_manifest.schema.json`](contracts/l2_dataset_manifest.schema.json).
+In summary, conversion starts from exactly these named inputs:
+
+```text
+INPUT_DIR/
+  lob.csv
+  trades.csv
+```
+
+and publishes this dataset tree:
+
+```text
+OUTPUT_DIR/
+  manifest.json
+  schema_version=1/
+    instrument_id=<instrument_id>/
+      date=<YYYY-MM-DD>/
+        book_snapshots.parquet
+        trades.parquet
+        replay.l2cache
+```
+
+Pass `OUTPUT_DIR/manifest.json` to `backtest.run()`. Do not pass an individual
+Parquet or cache file. Parquet is the canonical inspection/analysis format;
+the runtime resolves its optimized cache files through the manifest.
+
+Install the locked development dependencies, then convert the immutable raw
+files with explicit instrument and source metadata:
+
+```bash
+uv sync --locked
+uv run python scripts/convert_l2_csv.py \
+  INPUT_DIR OUTPUT_DIR \
+  --dataset-id DATASET_ID \
+  --instrument-id INSTRUMENT_ID \
+  --symbol SYMBOL \
+  --source-provider PROVIDER \
+  --venue VENUE \
+  --timestamp-unit us \
+  --timestamp-semantics exchange \
+  --price-scale PRICE_SCALE \
+  --tick-size-ticks TICK_SIZE_TICKS \
+  --contract-multiplier CONTRACT_MULTIPLIER \
+  --trade-side-semantics aggressor \
+  --same-timestamp-policy snapshot_first
+```
+
+The uppercase values and semantic choices are required facts, not defaults to
+copy blindly. If provenance is still unresolved, pass
+`--allow-unverified-metadata` together with `unknown` semantic values; the
+manifest is then explicitly diagnostic. The converter:
+
+- validates exact headers, ordering, timestamps, decimal scale, tick
+  alignment, quantities, depth, spread, and sides;
+- assigns one immutable merged sequence using the selected equal-time policy;
+- writes daily wide-schema Zstandard Parquet and a numeric native replay
+  cache in a temporary tree;
+- reopens and validates outputs, records hashes and throughput, and publishes
+  the final directory atomically.
+
+For the current `data_trades` files from earlier course tasks, provenance and
+market semantics are still unknown. The following is the command originally
+used for an explicitly unverified functional conversion; it does not invent a
+venue, symbol, exchange timestamp, trade-side meaning, or contract multiplier:
+
+```bash
+uv run python scripts/convert_l2_csv.py \
+  data_trades data_normalized/l2_parquet \
+  --dataset-id hw_previous_tasks_unverified \
+  --instrument-id 1 \
+  --timestamp-unit us \
+  --timestamp-semantics unknown \
+  --price-scale 10000000 \
+  --tick-size-ticks 1 \
+  --contract-multiplier 1 \
+  --trade-side-semantics unknown \
+  --same-timestamp-policy snapshot_first \
+  --allow-unverified-metadata
+```
+
+Here `price_scale=10_000_000` exactly preserves the observed seven decimal
+places. `tick_size_ticks=1`, `contract_multiplier=1`, and `instrument_id=1`
+are diagnostic internal values, not verified exchange metadata. The converter
+refuses to overwrite an existing output directory. For a repeat conversion,
+replace `data_normalized/l2_parquet` with a fresh output path, validate the new
+dataset, and then point replay at its `manifest.json`.
+
+Run a verified normalized dataset without supplying duplicate metadata:
+
+```python
+result = backtest.run(strategy, "data_normalized/l2_parquet/manifest.json", DateRange())
+```
+
+For an explicitly unverified diagnostic dataset, consent is a separate runtime
+flag and the result preserves the warning:
+
+```python
+result = backtest.run(
+    strategy,
+    "data_normalized/l2_parquet/manifest.json",
+    DateRange(),
+    BacktestConfig(allow_unverified_metadata=True),
+)
+assert result.dataset_id == "hw_previous_tasks_unverified"
+assert result.verified_metadata is False
+```
+
+Before starting replay threads, the runtime scans schema-v1 cache record
+headers and rejects manifest/cache disagreements in counts, bounds, dates, or
+global sequence continuity. It uses those verified bounds for `DateRange`
+pruning, then recomputes SHA-256 for every selected native cache file.
+The exact validation order, guarantees, cost, and remaining limitations are
+documented in
+[`architecture/12_l2_manifest_cache_validation.md`](architecture/12_l2_manifest_cache_validation.md).
+
+### Multiple disjoint L2 sources
+
+Build one strict flat parent manifest when a replay needs independently
+ordered L2 datasets for different instruments:
+
+```bash
+uv run python scripts/create_multi_source_manifest.py \
+  data_normalized/multi_source_manifest.json \
+  --dataset-id multi-instrument-run \
+  --source 10:data_normalized/instrument_1/manifest.json \
+  --source 20:data_normalized/instrument_2/manifest.json
+```
+
+Then pass `data_normalized/multi_source_manifest.json` as `data_path` to
+`backtest.run()`. Lower numeric priority wins when child timestamps are equal.
+Source IDs are assigned in command-line order. Children must be L2 manifests
+below the parent directory with exactly one disjoint `instrument_id` each and
+identical `timestamp_semantics`.
+
+Callbacks expose `source_id` and `global_market_sequence`; fills additionally
+expose `trigger_source_id`, local `trigger_source_sequence`, and
+`trigger_global_market_sequence`. With `run_summary_path`, inspect
+`source_audit.multi_source` for selected-record conservation,
+`full_replay_exact_once`, and the versioned provenance digest. The full
+contract and unsupported cases are in
+[`architecture/13_restricted_nway_event_merger.md`](architecture/13_restricted_nway_event_merger.md)
+and
+[`contracts/multi_source_manifest.schema.json`](contracts/multi_source_manifest.schema.json).
+
+Run a bounded end-to-end smoke test that submits one order, receives a fill,
+and observes the resulting position through the direct pybind11 integration:
+
+```bash
+uv run python examples/run_local_l2.py \
+  --run-summary artifacts/local_l2_run_summary.json
+```
+
+Use `--duration-seconds N` to change the replay window. This example is a
+functional check, not evidence of economically correct PnL for the unidentified
+instrument.
+
+### Full local replay and audit
+
+The normalized local dataset currently contains 22,901,679 records across
+2024-08-01 through 2024-08-06. The interval from its first to last manifest
+timestamp fits in 518,400 seconds. Run the complete range and persist its audit
+summary with:
+
+```bash
+uv run --no-sync python examples/run_local_l2.py \
+  data_normalized/l2_parquet/manifest.json \
+  --duration-seconds 518400 \
+  --run-summary artifacts/l2_full_summary.json
+```
+
+This run performs all-cache index reconciliation before range pruning,
+SHA-256 verification of selected caches, deterministic scheduler replay, and
+one final atomic summary write. Validate the summary:
+
+```bash
+jq -e '
+  .status == "success"
+  and .error == null
+  and .source_audit.checks.read_accounting
+  and .source_audit.checks.replay_type_accounting
+  and .source_audit.checks.trade_callbacks_match_replayed_trades
+  and .source_audit.checks.l2_market_deliveries_match_replayed_records
+  and .source_audit.checks.sequence_span_matches_replayed_records
+  and .source_audit.checks.full_manifest_replay
+  and .source_audit.checks.full_manifest_counts_match
+' artifacts/l2_full_summary.json
+```
+
+Expected output is `true`. `book_update` callback count does not have to equal
+the snapshot count because unchanged visible top-N snapshots are filtered.
+Trade callbacks must equal replayed trade records. The rolling FNV-1a sequence
+digest is useful for repeat-run comparison but is not a substitute for the
+cache SHA-256 integrity checks.
+
+An L2 snapshot is one atomic aggregated-book replacement and one final quote
+signal. It never fabricates order IDs, queue position, or add/cancel history.
+The current fill model is consequently an optimistic snapshot-based model.
+
 ## 7. Development workflow
 
 Run the repository checks before handing off a change:
@@ -226,7 +453,9 @@ For performance work, use the Release-only benchmarks:
 
 ```bash
 build-release/bin/test/back-tester-scheduler-benchmark
+build-release/bin/test/back-tester-price-cross-benchmark
 uv run python python/benchmarks/callback_overhead.py
+uv run python scripts/benchmark_l2_replay.py PATH_TO_MANIFEST
 ```
 
 Benchmark values are machine-specific observations, not pass/fail thresholds.
@@ -237,8 +466,9 @@ Benchmark values are machine-specific observations, not pass/fail thresholds.
   import verification from section 2.
 - C++ compiler not found: install a C++20 compiler and rerun the CMake
   configure command.
-- `cannot open source file`: pass a path relative to the repository root or an
-  absolute readable JSONL path.
+- `cannot open source file`: pass a readable JSONL path or L2 manifest path.
+- L2 manifest/cache mismatch: do not edit generated partitions; reconvert
+  from the immutable CSV source with the intended metadata.
 - Configuration validation error: check that market latency is non-negative
   and order latency, depth, instrument IDs, tick sizes, scales, and
   multipliers are positive.

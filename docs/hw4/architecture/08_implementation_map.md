@@ -8,7 +8,9 @@ This page is a code-reading index for the implemented system.
 |---|---|---|
 | Public Python entry point | `python/back_tester/__init__.py`, `src/python/bindings.cpp` | `python/tests/test_runtime.py`, `python/tests/test_end_to_end.py` |
 | Runtime composition | `src/runtime/BacktestRuntime.cpp` | `test/RuntimeTest.cpp` |
+| Restricted flat N-way L2 merge | `src/runtime/NWayMarketMerger.hpp`, `src/market/MultiSourceManifest.*` | `test/NWayMarketMergerTest.cpp`, `python/tests/test_l2_pipeline.py` |
 | Streaming JSONL source | `src/market/JsonlReader.*`, runtime `JsonlScheduledSource` | `test/CoreMarketTest.cpp`, `test/RuntimeTest.cpp` |
+| L2 conversion, trust preflight, and replay | `scripts/convert_l2_csv.py`, `src/market/L2CacheReader.*`, `HistoricalL2Book.*`, runtime `L2CacheScheduledSource` | `python/tests/test_l2_pipeline.py`, L2 cases in `test/CoreMarketTest.cpp` |
 | Historical L3 state | `src/market/LimitOrderBook.*`, `HistoricalLOBStore.*` | `test/CoreMarketTest.cpp` |
 | Scheduled ordering | `src/scheduler/ChronologicalScheduler.*` | `test/SchedulerTest.cpp` |
 | Threading and queues | `SchedulerRuntime.hpp`, `SpscRing.hpp`, `ReadyBarrier.hpp` | `test/SchedulerTest.cpp` |
@@ -16,6 +18,7 @@ This page is a code-reading index for the implemented system.
 | Private orders, matching, and synthetic fills | `src/trading/SimulatedLOB.*` | `test/TradingTest.cpp`, `test/TypedSimulatedLOBTest.cpp` |
 | Position accounting | `src/trading/PositionKeeper.*` | `test/TradingTest.cpp` |
 | Result columns and PnL | `src/results/ResultRecorder.*` | `test/ResultsTest.cpp` |
+| Run summary and replay audit | runtime `RunStatistics`, `src/python/bindings.cpp` | summary cases in `python/tests/test_runtime.py`, `python/tests/test_l2_pipeline.py` |
 | Python callbacks and GIL | `src/python/bindings.cpp` | `python/tests/test_runtime.py` |
 | Real two-instrument workflow | `examples/mean_reversion.py` | `python/tests/test_end_to_end.py` |
 
@@ -47,6 +50,27 @@ JsonlReader
   -> TradingEngine invokes Python through PythonStrategyAdapter
   -> ReadyBarrier acknowledges completion
 ```
+
+The L2 alternative replaces the first four lines with:
+
+```text
+convert_l2_csv.py -> daily Parquet + replay.l2cache + manifest.json
+L2CacheReader
+  -> strict manifest and consent validation
+  -> all-cache counts/bounds/date/sequence reconciliation
+  -> trusted DateRange selection and selected-cache SHA-256
+  -> L2CacheScheduledSource::prepare_for_dispatch()
+  -> HistoricalL2Book::replace_snapshot() or one typed TradeView
+```
+
+The preflight completes on the caller thread before `SchedulerRuntime` starts
+its dispatcher and trading threads. See
+[`12_l2_manifest_cache_validation.md`](12_l2_manifest_cache_validation.md).
+
+For a strict parent manifest, multiple `L2CacheScheduledSource` leaves stage
+one head each and `NWayMarketMerger` selects the global winner before the same
+Scheduler path. See
+[`13_restricted_nway_event_merger.md`](13_restricted_nway_event_merger.md).
 
 ## Command path
 

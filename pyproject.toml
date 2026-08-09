@@ -13,7 +13,9 @@ authors = [
     {name = "CMF Team", email = "cmfteam2018@gmail.com"},
 ]
 dependencies = [
-    "pandas>=2.2.0"
+    "pandas>=2.2.0",
+    "pyarrow>=24.0.0",
+    "tqdm>=4.67.3",
 ]
 
 requires-python = "==3.12.*"
@@ -26,6 +28,7 @@ dev = [
     "ninja>=1.11",
     "pip>=24",
     "pre-commit>=4.5.1",
+    "pyarrow>=17.0.0",
     "pytest>=8.3",
 ]
 
@@ -33,4 +36,6 @@ dev = [
 cmake.build-type = "Release"
 cmake.define.BUILD_PYTHON_MODULE = true
 cmake.define.BUILD_TESTS = false
+cmake.define.BUILD_BENCHMARKS = false
+cmake.define.BUILD_COMPONENT_PIPELINE = false
 wheel.packages = ["python/back_tester"]

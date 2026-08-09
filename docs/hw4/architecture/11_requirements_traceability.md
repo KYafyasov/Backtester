@@ -50,8 +50,8 @@ component, represented at the boundary, or intentionally outside scope.
 | Diagram box or flow | Final implementation disposition | Code / evidence |
 |---|---|---|
 | Databento JSON data source | Implemented as streaming Databento-like MBO JSONL | `src/market/JsonlReader.*`, `test/data/*.jsonl` |
-| Feather data source | Not implemented; the runtime input contract is JSONL | architecture scope/limitations |
-| Event Merger | One prefetched market source is dynamically merged with delayed strategy commands | `src/scheduler/SchedulerRuntime.hpp` |
+| Feather data source | Feather remains unsupported; local L2 CSV converts to canonical Parquet plus a native runtime cache. The runtime reconciles manifest counts/bounds/date/sequence before range pruning and verifies selected hashes before threads start | `scripts/convert_l2_csv.py`, `src/market/L2CacheReader.*`, `python/tests/test_l2_pipeline.py` |
+| Event Merger | Restricted flat L2 N-way merge is implemented for disjoint instruments with compatible timestamp semantics; hierarchy is deferred and overlapping feeds are unsupported | `src/runtime/NWayMarketMerger.hpp`, `src/market/MultiSourceManifest.*`, merger tests |
 | Chronological Dispatcher | Implemented with stable key `(scheduled time, priority, sequence)` | `ChronologicalScheduler.*`, scheduler ordering tests |
 | Map of LOBs per instrument | Implemented by `HistoricalLOBStore` | `src/market/HistoricalLOBStore.*` |
 | Market Data Publisher | Represented by the dispatcher-side SPSC event producer | `SchedulerRuntime.hpp`, `SpscRing.hpp` |
