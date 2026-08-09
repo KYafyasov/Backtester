@@ -1,0 +1,15 @@
+{
+  "features": [
+    "imbalance",
+    "spread",
+    "imbalance_ma_5",
+    "imbalance_ma_20",
+    "momentum_5",
+    "bid_qty",
+    "ask_qty"
+  ],
+  "train_acc": 0.7314507002820891,
+  "val_acc": 0.731015450201509,
+  "test_acc": 0.7332442233428954,
+  "best_iteration": 300
+}

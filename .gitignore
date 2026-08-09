@@ -287,3 +287,10 @@ __marimo__/
 # Ignore all local history of files
 .history
 .ionide
+
+# synthetic data files - генерируются кодом, не хранятся в git
+synthetic_signal*.jsonl
+smoke_test_data.jsonl
+pipeline_log.txt
+research_pipeline/__pycache__/
+strategies/**/__pycache__/
