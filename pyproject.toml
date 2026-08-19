@@ -38,4 +38,5 @@ cmake.define.BUILD_PYTHON_MODULE = true
 cmake.define.BUILD_TESTS = false
 cmake.define.BUILD_BENCHMARKS = false
 cmake.define.BUILD_COMPONENT_PIPELINE = false
+cmake.define.CMAKE_POSITION_INDEPENDENT_CODE = true
 wheel.packages = ["python/back_tester"]

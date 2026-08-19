@@ -16,6 +16,9 @@ from strategies.ml.ml_logistic import MLLogisticStrategy
 from strategies.ml.lightgbm_strategy import LightGBMStrategy
 from strategies.neural.mlp_strategy import MLPStrategy
 from strategies.neural.tcn_strategy import TCNStrategy
+from strategies.meta.ensemble_strategy import VotingEnsembleStrategy
+from strategies.rl.dqn_strategy import DQNStrategy
+from strategies.neural.lstm_strategy import LSTMStrategy
 
 INSTRUMENT_IDS = [1, 2]
 INSTRUMENTS = [
@@ -32,6 +35,9 @@ STRATEGY_FACTORIES = {
     "lightgbm": lambda: LightGBMStrategy(INSTRUMENT_IDS, prob_threshold=0.52, confirmation_steps=3, min_hold_updates=15, order_size=1),
     "mlp": lambda: MLPStrategy(INSTRUMENT_IDS, prob_threshold=0.52, confirmation_steps=3, min_hold_updates=15, order_size=1),
     "tcn": lambda: TCNStrategy(INSTRUMENT_IDS, prob_threshold=0.52, confirmation_steps=3, min_hold_updates=15, order_size=1),
+    "ensemble_voting": lambda: VotingEnsembleStrategy(INSTRUMENT_IDS, prob_threshold=0.52, confirmation_steps=3, min_hold_updates=15, order_size=1),
+    "dqn": lambda: DQNStrategy(INSTRUMENT_IDS, order_size=1),
+    "lstm": lambda: LSTMStrategy(INSTRUMENT_IDS, prob_threshold=0.52, confirmation_steps=3, min_hold_updates=15, order_size=1),
 }
 
 BOOK_DEPTH = 1
