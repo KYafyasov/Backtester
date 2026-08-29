@@ -6,6 +6,8 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/Modules)
 
 option(BUILD_TESTS "Build tests" ON)
 option(BUILD_BENCHMARKS "Build benchmarks" ON)
+option(BUILD_COMPONENT_PIPELINE
+       "Build the Feather ingestion/order-book/pricing component pipeline" ON)
 
 # Choose build type
 if(NOT CMAKE_BUILD_TYPE)
@@ -30,7 +32,7 @@ macro(print_message)
 endmacro()
 
 print_message("----------------------------------------")
-print_message("Options:            BUILD_TESTS=${BUILD_TESTS} BUILD_BENCHMARKS=${BUILD_BENCHMARKS}")
+print_message("Options:            BUILD_TESTS=${BUILD_TESTS} BUILD_BENCHMARKS=${BUILD_BENCHMARKS} BUILD_COMPONENT_PIPELINE=${BUILD_COMPONENT_PIPELINE}")
 print_message("Build type:         ${CMAKE_BUILD_TYPE}")
 print_message("Build host:         ${BUILD_NODE}")
 print_message("Processor count:    ${PROCESSOR_COUNT}")
@@ -72,12 +74,29 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-# Debug options
-add_compile_options($<$<CONFIG:Debug>:-O0> $<$<CONFIG:Debug>:-gdwarf-4>)
-add_compile_options($<$<CONFIG:Release>:-O3> $<$<CONFIG:Release>:-DNDEBUG>)
 
-# Warnings
-add_compile_options(-Werror -Wall -Wextra)
+# Debug/release flags and warnings
+if(MSVC)
+    add_compile_options(
+        $<$<CONFIG:Debug>:/Od>
+        $<$<CONFIG:Debug>:/Zi>
+        $<$<CONFIG:Release>:/O2>
+        $<$<CONFIG:Release>:/DNDEBUG>
+        /W4
+        /WX
+        /EHsc
+    )
+else()
+    add_compile_options(
+        $<$<CONFIG:Debug>:-O0>
+        $<$<CONFIG:Debug>:-g>
+        $<$<CONFIG:Release>:-O3>
+        $<$<CONFIG:Release>:-DNDEBUG>
+        -Werror
+        -Wall
+        -Wextra
+    )
+endif()
 #add_compile_options(-Wfatal-errors -ftemplate-backtrace-limit=0)
 
 # Architecture optimization

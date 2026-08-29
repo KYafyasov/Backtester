@@ -7,17 +7,24 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 find_package(Threads REQUIRED)
 
 include(cmake/GlobalSettings.cmake)
-include(cmake/ThirdPartyLibs.cmake)
+if(BUILD_COMPONENT_PIPELINE)
+    include(cmake/ThirdPartyLibs.cmake)
+endif()
 include(cmake/GenerateVersionFile.cmake)
 
 add_subdirectory(src)
 add_subdirectory(config)
+
+option(BUILD_PYTHON_MODULE "Build the Python extension module" OFF)
+if(BUILD_PYTHON_MODULE)
+    add_subdirectory(src/python)
+endif()
 
 if(BUILD_TESTS)
     enable_testing()
     add_subdirectory(test)
 endif()
 
-if(BUILD_BENCHMARKS)
+if(BUILD_BENCHMARKS AND BUILD_COMPONENT_PIPELINE)
     add_subdirectory(bench)
 endif()

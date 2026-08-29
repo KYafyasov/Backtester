@@ -1,8 +1,8 @@
 // tests for BasicTypes
 
-#include "types/BasicTypes.hpp"
+#include "common/BasicTypes.hpp"
 
-#include "catch2/catch_all.hpp"
+#include "MiniTest.hpp"
 
 using namespace cmf;
 

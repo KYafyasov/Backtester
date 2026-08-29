@@ -1,7 +1,14 @@
+[build-system]
+requires = [
+    "scikit-build-core>=0.10",
+    "pybind11>=2.13",
+]
+build-backend = "scikit_build_core.build"
+
 [project]
 name = "back-tester-cmf"
-version = "0.0.0"
-description = "Default template for PDM package"
+version = "0.0.1"
+description = "CMF Advanced Backtesting Engine for Options"
 authors = [
     {name = "CMF Team", email = "cmfteam2018@gmail.com"},
 ]
@@ -15,11 +22,21 @@ requires-python = "==3.12.*"
 readme = "README.md"
 license = {text = "MIT"}
 
-
-[tool.pdm]
-distribution = false
-
 [dependency-groups]
 dev = [
+    "cmake>=3.22",
+    "ninja>=1.11",
+    "pip>=24",
     "pre-commit>=4.5.1",
+    "pyarrow>=17.0.0",
+    "pytest>=8.3",
 ]
+
+[tool.scikit-build]
+cmake.build-type = "Release"
+cmake.define.BUILD_PYTHON_MODULE = true
+cmake.define.BUILD_TESTS = false
+cmake.define.BUILD_BENCHMARKS = false
+cmake.define.BUILD_COMPONENT_PIPELINE = false
+cmake.define.CMAKE_POSITION_INDEPENDENT_CODE = true
+wheel.packages = ["python/back_tester"]

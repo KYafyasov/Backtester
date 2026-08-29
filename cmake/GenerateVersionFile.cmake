@@ -69,6 +69,9 @@ GetSubdirectories(${CMAKE_SOURCE_DIR}/3rdparty libs)
 foreach(lib ${libs})
     list(APPEND COMPONENT_DIR_LIST ${lib} ${CMAKE_SOURCE_DIR}/3rdparty/${lib})
     list(APPEND THIRD_PARTY_COMPONENTS ${lib})
+    if(TARGET ${lib})
+        list(APPEND GENERATE_VERSION_TARGET_DEPS ${lib})
+    endif()
 endforeach()
 
 print_message("Third party libs:   ${THIRD_PARTY_COMPONENTS}")
@@ -81,6 +84,6 @@ configure_file(${CMAKE_SOURCE_DIR}/src/Version.hpp.in ${CMAKE_BINARY_DIR}/includ
 # regenerate Version.hpp on the build step
 add_custom_target(GenerateVersion
     COMMAND ${CMAKE_COMMAND} -DDISABLE_PRINT=1 .
-    DEPENDS ${CMAKE_SOURCE_DIR}/src/Version.hpp.in ${THIRD_PARTY_COMPONENTS}
+    DEPENDS ${CMAKE_SOURCE_DIR}/src/Version.hpp.in ${GENERATE_VERSION_TARGET_DEPS}
     COMMENT "Configuring Version.hpp"
 )

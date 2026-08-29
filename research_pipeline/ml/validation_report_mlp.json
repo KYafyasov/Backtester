@@ -1,0 +1,36 @@
+{
+  "walk_forward_folds": [
+    {
+      "fold": 0,
+      "train_size": 1416810,
+      "test_size": 1416810,
+      "test_acc": 0.731993704166402,
+      "baseline": 0.5958921803205793
+    },
+    {
+      "fold": 1,
+      "train_size": 2833620,
+      "test_size": 1416810,
+      "test_acc": 0.7310027456045624,
+      "baseline": 0.5930463506045272
+    },
+    {
+      "fold": 2,
+      "train_size": 4250430,
+      "test_size": 1416810,
+      "test_acc": 0.7313358883689415,
+      "baseline": 0.5970977054086293
+    },
+    {
+      "fold": 3,
+      "train_size": 5667240,
+      "test_size": 1416810,
+      "test_acc": 0.7289474241429691,
+      "baseline": 0.5989095220954115
+    }
+  ],
+  "walk_forward_mean_acc": 0.7308199405707188,
+  "permutation_real_acc": 0.7326612039732388,
+  "permutation_mean_acc": 0.5984567341972923,
+  "permutation_p_value": 0.0
+}

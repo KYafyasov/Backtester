@@ -1,0 +1,170 @@
+# System scope and implemented behavior
+
+## Purpose
+
+This project is a deterministic, in-process options backtesting engine built
+for an HFT course assignment. It demonstrates typed market-data ingestion,
+historical book reconstruction, causal order scheduling, private order
+matching, Python strategy callbacks, position/PnL accounting, and bulk result
+delivery.
+
+It is a backtester, not an exchange emulator or a complete options risk system.
+
+## Implemented runtime
+
+- One OS process.
+- One dispatcher thread and one trading-engine consumer thread.
+- Multiple instruments in one replay.
+- Optional strict flat N-way merge of L2 child manifests with disjoint
+  `instrument_id` ownership.
+- Databento-like MBO JSONL input, plus manifest-selected L2 replay caches
+  generated beside canonical daily Parquet partitions.
+- Pre-thread L2 manifest/cache reconciliation: counts, exact bounds, UTC
+  partition dates, and global sequence continuity are validated before
+  `DateRange` pruning; selected cache SHA-256 values are then verified.
+- Streaming, fail-fast parsing into numeric native types.
+- A per-instrument historical L3 book.
+- A separate aggregated L2 snapshot book; one run never mixes L2 and L3 state
+  for an instrument.
+- One private `EngineView` owned by the typed `SimulatedLOB`.
+- Fixed market-data latency and strictly positive fixed order latency.
+- Limit GTC orders, full fills on price cross, resting orders, and cancel.
+- Top-N Python book callbacks; default depth is 15.
+- Full L3 replay even though Python receives an aggregated top-N view.
+- Full-fill-on-price-cross matching from ordered best-quote and trade signals.
+- Optional deterministic risk-averse FIFO queue estimation with trade-volume
+  partial fills.
+- Per-instrument positions, contract multipliers, FIFO realized PnL, and
+  midpoint marking.
+- Native columnar result buffers exposed as pandas DataFrames and a Series.
+- Optional atomic `run_summary.json` with replay audit counters, callback/result
+  counts, configuration, duration, provenance, and failure text.
+- Native, Python, end-to-end, determinism, sanitizer, and benchmark coverage.
+
+Every strategy-facing event, order, position, and result row carries a numeric
+`instrument_id`.
+
+## Core behavioral rules
+
+### One fill authority
+
+`trading::SimulatedLOB` is the only component that creates synthetic fills.
+The scheduler determines when a command arrives; the historical book provides
+displayed liquidity; `TradingEngine` applies the resulting fill decisions to
+order lifecycle, positions, results, and callbacks without independently
+matching.
+
+### One deterministic virtual timeline
+
+```text
+market delivery = exchange timestamp + market-data latency
+order arrival   = callback-visible engine time + order latency
+cancel arrival  = callback-visible engine time + order latency
+```
+
+At the same scheduled timestamp, priority is:
+
+1. market delivery;
+2. new-order arrival;
+3. cancel arrival.
+
+Source or command sequence is the stable tie-breaker within one class.
+
+### Strict market-data barrier
+
+The dispatcher publishes one scheduled event with a monotonically increasing
+`dispatch_seq`. It does not mutate shared market state for the next event until
+the trading thread publishes `processed_seq >= dispatch_seq`.
+
+The acknowledgement occurs after matching, state updates, result recording,
+Python callbacks, and command enqueue for the current event.
+
+### Callback contract
+
+Python strategies receive:
+
+- `on_book_update(BookUpdate)`;
+- `on_trade(Trade)`;
+- `on_fill(Fill)`;
+- `on_reject(Reject)`.
+
+A book callback is emitted after a complete atomic source group and only when
+the configured top-N view changes. For a market delivery, the observable order
+is:
+
+1. resting-order matching and fill callbacks;
+2. trade callbacks in source order;
+3. one book callback when top-N changed.
+
+State, position, PnL inputs, and result rows are updated before `on_fill()` or
+`on_reject()` runs.
+
+### Non-recursive strategy commands
+
+An order or cancel submitted from a callback enters the command ring with a
+future scheduled arrival. It is never matched recursively on the callback's
+C++ stack. Immediate validation rejects are deferred until the initiating
+callback unwinds.
+
+### Fill-at-touch execution model
+
+A qualifying best-quote or trade-price cross fills every eligible own order's
+complete remaining quantity. Historical quote and trade sizes do not cap the
+fill, and synthetic fills never mutate the source historical book. This is an
+explicitly optimistic backtest model: the trader is responsible for choosing
+an order size appropriate for the option instrument's liquidity and turnover.
+
+`FillModel::QueueAware` is an opt-in extension. A passive order joins behind
+displayed same-side quantity and earlier private FIFO quantity at its price.
+Only later trades with a known opposite aggressor side advance the queue;
+historical cancellations do not. Excess traded volume can partially fill an
+order. Quote crosses remain complete immediate fills.
+
+### Failure policy
+
+Malformed input, chronology regressions, invalid configuration, native
+exceptions, and Python callback exceptions fail the run. The runtime records
+the first exception, requests stop, closes/wakes queues and barriers, joins both
+threads, and rethrows to the caller. It does not silently continue with a
+corrupted replay.
+
+## Supported order lifecycle
+
+```text
+PendingNew
+  -> Open | Filled | Rejected
+Open
+  -> PartiallyFilled | Filled | PendingCancel
+PartiallyFilled
+  -> PartiallyFilled | Filled | PendingCancel
+PendingCancel
+  -> PendingCancel | Filled | Cancelled
+```
+
+Terminal states are `Filled`, `Cancelled`, and `Rejected`.
+`PartiallyFilled` is produced only by the queue-aware matcher. Partial execution
+while a cancel is pending preserves `PendingCancel` until the order fills or
+the cancel arrives.
+
+## Explicit limitations
+
+- No sockets, IPC, multiple processes, or distributed services.
+- No exact exchange queue identity for aggregated L2 input, probabilistic
+  queue advancement, or market impact.
+- Fill-at-touch has no quote-size or trade-size capacity constraint; queue-aware
+  mode uses eligible trade volume but still treats a quote cross as complete.
+- No stochastic latency, jitter, or slippage.
+- No replace/amend, market, stop, peg, post-only, IOC, FOK, or multi-leg
+  orders.
+- No self-matching between private strategy orders.
+- No exercise, assignment, expiration settlement, Greeks, volatility surface,
+  or complete options risk engine.
+- No direct Feather input, database, UI, or generic plugin system. Parquet is
+  produced offline for typed local persistence; runtime reads the versioned
+  native cache referenced by its manifest.
+- No overlapping source ownership, multi-venue consolidated book, mixed
+  L2/L3 merge, wrapped JSONL child, or public nested multi-source manifest.
+- The shipped runtime has one trading `EngineView`; isolation between typed
+  `SimulatedLOB` instances is tested but is not exposed by `backtest.run()`.
+- No per-event file logging, log rotation, distributed tracing, or telemetry
+  exporter. Run summaries are opt-in and written once outside the hot path.

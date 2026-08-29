@@ -42,6 +42,7 @@ set(DESTDIR "")
 # Catch2 - C++ testing framework
 ExternalProject_Add(
     Catch2
+    EXCLUDE_FROM_ALL TRUE
     GIT_REPOSITORY https://github.com/catchorg/Catch2.git
     GIT_TAG v3.8.1
     GIT_SHALLOW TRUE
@@ -49,8 +50,6 @@ ExternalProject_Add(
     SOURCE_DIR "${CMAKE_SOURCE_DIR}/3rdparty/Catch2"
     BINARY_DIR "${CMAKE_BINARY_DIR}/3rdparty/Catch2"
     CMAKE_ARGS ${FORWARDED_CMAKE_ARGS}
-    BUILD_COMMAND $(MAKE)
-    INSTALL_COMMAND $(MAKE) -s DESTDIR=${DESTDIR} install
 )
 
 set(TGT Catch2-static-lib)
@@ -67,6 +66,7 @@ target_link_libraries(${TGT} PUBLIC INTERFACE
 # Google Benchmark
 ExternalProject_Add(
     googlebenchmark
+    EXCLUDE_FROM_ALL TRUE
     GIT_REPOSITORY https://github.com/google/benchmark.git
     GIT_TAG v1.9.5
     GIT_SHALLOW TRUE
@@ -76,8 +76,6 @@ ExternalProject_Add(
     CMAKE_ARGS ${BENCHMARK_CMAKE_ARGS}
               -DBENCHMARK_ENABLE_TESTING=OFF
               -DBENCHMARK_ENABLE_GTEST_TESTS=OFF
-    BUILD_COMMAND $(MAKE)
-    INSTALL_COMMAND $(MAKE) -s DESTDIR=${DESTDIR} install
 )
 
 set(TGT googlebenchmark-static-lib)
@@ -91,6 +89,7 @@ target_link_libraries(${TGT} PUBLIC INTERFACE -lbenchmark_main -lbenchmark)
 # Apache Arrow C++ - enough for reading .feather files
 ExternalProject_Add(
         apache-arrow
+        EXCLUDE_FROM_ALL TRUE
         GIT_REPOSITORY https://github.com/apache/arrow.git
         GIT_TAG apache-arrow-24.0.0
         GIT_SHALLOW TRUE
@@ -125,8 +124,6 @@ ExternalProject_Add(
 
         # Let Arrow build/fetch its own third-party deps
         -DARROW_DEPENDENCY_SOURCE=BUNDLED
-        BUILD_COMMAND $(MAKE)
-        INSTALL_COMMAND $(MAKE) -s DESTDIR=${DESTDIR} install
 )
 
 set(TGT apache-arrow-lib)
@@ -138,35 +135,6 @@ target_link_libraries(${TGT} PUBLIC INTERFACE -larrow)
 
 # ---------------------------------------------------------------------------------------
 # Abseil
-ExternalProject_Add(
-        abseil-cpp
-        GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
-        GIT_TAG 20260107.1
-        GIT_SHALLOW TRUE
-        GIT_PROGRESS TRUE
-        SOURCE_DIR "${CMAKE_SOURCE_DIR}/3rdparty/abseil-cpp"
-        BINARY_DIR "${CMAKE_BINARY_DIR}/3rdparty/abseil-cpp"
-        CMAKE_ARGS
-        ${FORWARDED_CMAKE_ARGS}
-        -DABSL_BUILD_TESTING=OFF
-        -DABSL_USE_GOOGLETEST_HEAD=OFF
-        -DABSL_PROPAGATE_CXX_STD=ON
-        -DCMAKE_CXX_STANDARD=20
-        -DABSL_ENABLE_INSTALL=ON
-        BUILD_COMMAND $(MAKE)
-        INSTALL_COMMAND $(MAKE) -s DESTDIR=${DESTDIR} install
-)
-
-set(TGT abseil-lib)
-add_library(${TGT} INTERFACE)
-add_dependencies(${TGT} abseil-cpp)
-target_include_directories(${TGT} SYSTEM PUBLIC INTERFACE ${CMAKE_BINARY_DIR}/include)
-target_link_directories(${TGT} PUBLIC INTERFACE ${CMAKE_BINARY_DIR}/lib)
-
-# Abseil static libs with their transitive dependencies.
-# GNU ld (Linux) requires every transitive dep to appear on the link line;
-# --start-group/--end-group lets the linker make multiple passes to resolve
-# circular references between static archives.
 set(_ABSL_LIBS
     ${CMAKE_BINARY_DIR}/lib/libabsl_raw_hash_set.a
     ${CMAKE_BINARY_DIR}/lib/libabsl_hash.a
@@ -193,6 +161,33 @@ set(_ABSL_LIBS
     ${CMAKE_BINARY_DIR}/lib/libabsl_demangle_internal.a
 )
 
+ExternalProject_Add(
+        abseil-cpp
+        EXCLUDE_FROM_ALL TRUE
+        GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
+        GIT_TAG 20260107.1
+        GIT_SHALLOW TRUE
+        GIT_PROGRESS TRUE
+        SOURCE_DIR "${CMAKE_SOURCE_DIR}/3rdparty/abseil-cpp"
+        BINARY_DIR "${CMAKE_BINARY_DIR}/3rdparty/abseil-cpp"
+        CMAKE_ARGS
+        ${FORWARDED_CMAKE_ARGS}
+        -DABSL_BUILD_TESTING=OFF
+        -DABSL_USE_GOOGLETEST_HEAD=OFF
+        -DABSL_PROPAGATE_CXX_STD=ON
+        -DCMAKE_CXX_STANDARD=20
+        -DABSL_ENABLE_INSTALL=ON
+        BUILD_BYPRODUCTS ${_ABSL_LIBS}
+)
+
+set(TGT abseil-lib)
+add_library(${TGT} INTERFACE)
+add_dependencies(${TGT} abseil-cpp)
+target_include_directories(${TGT} SYSTEM PUBLIC INTERFACE ${CMAKE_BINARY_DIR}/include)
+target_link_directories(${TGT} PUBLIC INTERFACE ${CMAKE_BINARY_DIR}/lib)
+
+# Abseil static libs with their transitive dependencies. GNU ld (Linux)
+# requires every dependency on the link line; the group resolves cycles.
 if(UNIX AND NOT APPLE)
     target_link_libraries(${TGT} PUBLIC INTERFACE
         -Wl,--start-group ${_ABSL_LIBS} -Wl,--end-group

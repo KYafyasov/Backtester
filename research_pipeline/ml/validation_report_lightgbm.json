@@ -1,0 +1,40 @@
+{
+  "best_params": {
+    "num_leaves": 63,
+    "learning_rate": 0.05
+  },
+  "walk_forward_folds": [
+    {
+      "fold": 0,
+      "train_size": 1416810,
+      "test_size": 1416810,
+      "test_acc": 0.7337935220671791,
+      "baseline": 0.5958921803205793
+    },
+    {
+      "fold": 1,
+      "train_size": 2833620,
+      "test_size": 1416810,
+      "test_acc": 0.7321391012203471,
+      "baseline": 0.5930463506045272
+    },
+    {
+      "fold": 2,
+      "train_size": 4250430,
+      "test_size": 1416810,
+      "test_acc": 0.731690205461565,
+      "baseline": 0.5970977054086293
+    },
+    {
+      "fold": 3,
+      "train_size": 5667240,
+      "test_size": 1416810,
+      "test_acc": 0.729605945751371,
+      "baseline": 0.5989095220954115
+    }
+  ],
+  "walk_forward_mean_acc": 0.7318071936251156,
+  "permutation_real_acc": 0.7334830789070534,
+  "permutation_mean_acc": 0.5984479487052773,
+  "permutation_p_value": 0.0
+}
