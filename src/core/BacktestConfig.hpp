@@ -19,6 +19,15 @@ struct BacktestConfig {
   TimestampNs order_latency_ns{};
   std::uint32_t book_depth{15};
   bool allow_unverified_metadata{};
+  FillModel fill_model{FillModel::FillAtTouch};
+  SlippageModel slippage_model{SlippageModel::None};
+  std::uint32_t taker_slippage_tick_count{};
+  std::int64_t maker_fee_micros_per_contract{};
+  std::int64_t taker_fee_micros_per_contract{};
+  Quantity max_order_quantity{std::numeric_limits<Quantity>::max()};
+  Quantity max_abs_position{std::numeric_limits<Quantity>::max()};
+  Quantity max_open_quantity{std::numeric_limits<Quantity>::max()};
+  std::uint32_t max_active_orders{std::numeric_limits<std::uint32_t>::max()};
 };
 
 struct DateRange {

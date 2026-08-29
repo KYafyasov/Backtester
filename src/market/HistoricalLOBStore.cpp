@@ -76,6 +76,17 @@ HistoricalLOBStore::best_ask(InstrumentId instrument_id) const {
                                      : iterator->second->best_ask();
 }
 
+std::optional<HistoricalBookLevel>
+HistoricalLOBStore::level(InstrumentId instrument_id, Side side,
+                          PriceTicks price) const {
+  if (const auto *book = find(instrument_id); book != nullptr) {
+    return book->level(side, price);
+  }
+  const auto iterator = l2_books_.find(instrument_id);
+  return iterator == l2_books_.end() ? std::nullopt
+                                     : iterator->second->level(side, price);
+}
+
 void HistoricalLOBStore::write_top_bids(InstrumentId instrument_id,
                                         std::size_t depth,
                                         std::vector<BookLevel> &output) const {

@@ -4,6 +4,7 @@
 #include "market/HistoricalLOBStore.hpp"
 #include "scheduler/SchedulerRuntime.hpp"
 #include "trading/PositionKeeper.hpp"
+#include "trading/PreTradeRiskEngine.hpp"
 #include "trading/SimulatedLOB.hpp"
 #include "trading/Strategy.hpp"
 
@@ -40,11 +41,13 @@ public:
   position(InstrumentId instrument_id) const override;
   [[nodiscard]] std::span<const OrderQueryRow>
   open_orders(InstrumentId instrument_id) override;
+  [[nodiscard]] RiskSnapshot risk(InstrumentId instrument_id) const override;
 
 private:
   struct OwnOrder {
     OrderQueryRow query;
     bool cancel_requested{};
+    bool risk_reserved{};
   };
 
   [[nodiscard]] TimestampNs delayed_arrival() const;
@@ -61,12 +64,10 @@ private:
   void process_cancel(const CancelCommand &command);
   void apply_fills(std::span<const SyntheticFill> fills,
                    TimestampNs exchange_ts_ns);
-  void apply_fill(OwnOrder &order, PriceTicks price, Quantity quantity,
-                  TimestampNs exchange_ts_ns, LiquiditySource liquidity_source,
-                  Sequence trigger_source_sequence,
-                  SourceId trigger_source_id = 0,
-                  Sequence trigger_global_market_sequence = 0);
+  void apply_fill(OwnOrder &order, const SyntheticFill &fill,
+                  TimestampNs exchange_ts_ns);
   void emit_order_event(const OwnOrder &order, OrderLogEventType event_type,
+                        OrderState previous_state,
                         RejectReason reason = RejectReason::None);
   void emit_reject(InstrumentId instrument_id, ClOrdId client_order_id,
                    RejectReason reason, TimestampNs exchange_ts_ns);
@@ -94,6 +95,7 @@ private:
   Strategy &strategy_;
   Recorder &recorder_;
   PositionKeeper positions_;
+  PreTradeRiskEngine risk_;
   SimulatedLOB simulated_lob_;
   std::unordered_map<InstrumentId, InstrumentMeta> instruments_;
   std::unordered_map<ClOrdId, OwnOrder> orders_;
@@ -106,6 +108,7 @@ private:
   ClOrdId next_client_order_id_{};
   Sequence next_fill_sequence_{};
   Sequence next_reject_sequence_{};
+  Sequence next_transition_sequence_{};
   std::size_t callback_depth_{};
   bool draining_rejects_{};
   bool has_time_{};

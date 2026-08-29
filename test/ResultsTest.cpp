@@ -37,15 +37,20 @@ FillResultRow fill(TimestampNs time, InstrumentId instrument_id,
 OrderLogResultRow order_event(TimestampNs time, OrderLogEventType event_type,
                               OrderState state) {
   return OrderLogResultRow{time,
+                           static_cast<Sequence>(time),
                            7,
                            42,
                            event_type,
+                           state == OrderState::PendingNew
+                               ? OrderState::PendingNew
+                               : OrderState::Open,
                            state,
                            Side::Buy,
                            1'005,
                            10,
                            state == OrderState::PartiallyFilled ? 4 : 0,
                            state == OrderState::PartiallyFilled ? 6 : 10,
+                           0,
                            RejectReason::None};
 }
 
@@ -97,19 +102,24 @@ TEST_CASE("Result columns preserve every frozen field and equal lengths",
 
   const auto orders = result.order_log();
   REQUIRE(orders.size() == 3);
+  REQUIRE(orders.transition_sequence.size() == orders.size());
   REQUIRE(orders.instrument_id.size() == orders.size());
   REQUIRE(orders.client_order_id.size() == orders.size());
   REQUIRE(orders.event_type.size() == orders.size());
+  REQUIRE(orders.previous_state.size() == orders.size());
   REQUIRE(orders.state.size() == orders.size());
   REQUIRE(orders.side.size() == orders.size());
   REQUIRE(orders.limit_price_ticks.size() == orders.size());
   REQUIRE(orders.order_quantity.size() == orders.size());
   REQUIRE(orders.filled_quantity.size() == orders.size());
   REQUIRE(orders.remaining_quantity.size() == orders.size());
+  REQUIRE(orders.queue_ahead_quantity.size() == orders.size());
   REQUIRE(orders.reject_reason.size() == orders.size());
   REQUIRE(orders.event_type[0] == OrderLogEventType::Submit);
   REQUIRE(orders.event_type[1] == OrderLogEventType::Accepted);
   REQUIRE(orders.event_type[2] == OrderLogEventType::Fill);
+  REQUIRE(orders.transition_sequence[2] == 102);
+  REQUIRE(orders.previous_state[2] == OrderState::Open);
   REQUIRE(orders.state[2] == OrderState::PartiallyFilled);
 }
 
@@ -319,4 +329,34 @@ TEST_CASE("Twenty native result runs are byte-order deterministic",
       REQUIRE(numerators == baseline_numerators);
     }
   }
+}
+
+TEST_CASE("Fees rejects and final positions are frozen for analysis",
+          "[Results][ExecutionCosts]") {
+  const std::array instruments{InstrumentMeta{1, 1, 100, 1}};
+  ResultRecorder recorder(instruments);
+  auto charged_fill = fill(10, 1, 1, Side::Buy, 100, 2);
+  charged_fill.reference_price_ticks = 99;
+  charged_fill.liquidity_role = LiquidityRole::Taker;
+  charged_fill.slippage_ticks = 1;
+  charged_fill.fee_micros = 250'000;
+  charged_fill.order_submit_ts_ns = 5;
+  charged_fill.order_arrival_ts_ns = 7;
+  charged_fill.time_to_fill_ns = 5;
+  recorder.on_fill(charged_fill);
+  recorder.on_reject(
+      RejectView{1, 2, RejectReason::RiskOrderSizeExceeded, 11, 11, 1});
+
+  const auto result = recorder.freeze();
+  REQUIRE(result.fills().fee_micros[0] == 250'000);
+  REQUIRE(result.fills().reference_price_ticks[0] == 99);
+  REQUIRE(result.fills().time_to_fill_ns[0] == 5);
+  REQUIRE(result.exact_pnl()[0].numerator == -1);
+  REQUIRE(result.exact_pnl()[0].denominator == 4);
+  REQUIRE(result.rejects().size() == 1);
+  REQUIRE(result.rejects().reason[0] == RejectReason::RiskOrderSizeExceeded);
+  REQUIRE(result.final_positions().size() == 1);
+  REQUIRE(result.final_positions().net_quantity[0] == 2);
+  REQUIRE(result.final_positions().realized_pnl[0] == -0.25);
+  REQUIRE(result.final_positions().total_pnl[0] == -0.25);
 }

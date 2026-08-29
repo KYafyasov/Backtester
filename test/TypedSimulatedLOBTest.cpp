@@ -78,3 +78,132 @@ TEST_CASE("One price-only trade fills all eligible buys and sells",
   REQUIRE(fills[1].liquidity_source == LiquiditySource::TradeCross);
   REQUIRE(fills[1].trigger_source_sequence == 7);
 }
+
+TEST_CASE(
+    "Queue-aware matching waits for displayed FIFO and emits partial fills",
+    "[SimulatedLOB][QueueAware]") {
+  market::HistoricalLOBStore books;
+  auto &book = books.apply(add(1, 11, Side::Buy, 100, 5));
+  trading::SimulatedLOB simulated(instruments, FillModel::QueueAware);
+
+  REQUIRE(simulated.accept(1, 1, Side::Buy, 100, 4, 1, &book).empty());
+  REQUIRE(simulated.queue_ahead(1) == 5);
+
+  const PriceCrossSignal first_trade{1,
+                                     200,
+                                     205,
+                                     2,
+                                     PriceCrossSource::Trade,
+                                     std::nullopt,
+                                     std::nullopt,
+                                     100,
+                                     0,
+                                     0,
+                                     Side::Sell,
+                                     3};
+  REQUIRE(simulated.on_signal(first_trade).empty());
+  REQUIRE(simulated.queue_ahead(1) == 2);
+
+  const PriceCrossSignal second_trade{1,
+                                      210,
+                                      215,
+                                      3,
+                                      PriceCrossSource::Trade,
+                                      std::nullopt,
+                                      std::nullopt,
+                                      100,
+                                      0,
+                                      0,
+                                      Side::Sell,
+                                      4};
+  const auto partial = simulated.on_signal(second_trade);
+  REQUIRE(partial.size() == 1);
+  REQUIRE(partial[0].client_order_id == 1);
+  REQUIRE(partial[0].quantity == 2);
+  REQUIRE(simulated.queue_ahead(1) == 0);
+
+  const PriceCrossSignal final_trade{1,
+                                     220,
+                                     225,
+                                     4,
+                                     PriceCrossSource::Trade,
+                                     std::nullopt,
+                                     std::nullopt,
+                                     100,
+                                     0,
+                                     0,
+                                     Side::Sell,
+                                     2};
+  const auto completed = simulated.on_signal(final_trade);
+  REQUIRE(completed.size() == 1);
+  REQUIRE(completed[0].quantity == 2);
+  REQUIRE_FALSE(simulated.queue_ahead(1).has_value());
+}
+
+TEST_CASE("Queue-aware own orders retain FIFO and cancellation releases space",
+          "[SimulatedLOB][QueueAware]") {
+  market::HistoricalLOBStore books;
+  auto &book = books.apply(add(1, 11, Side::Buy, 100, 5));
+  trading::SimulatedLOB simulated(instruments, FillModel::QueueAware);
+
+  REQUIRE(simulated.accept(1, 1, Side::Buy, 100, 2, 1, &book).empty());
+  books.apply(add(2, 12, Side::Buy, 100, 5));
+  REQUIRE(simulated.accept(2, 1, Side::Buy, 100, 3, 2, &book).empty());
+  REQUIRE(simulated.queue_ahead(1) == 5);
+  REQUIRE(simulated.queue_ahead(2) == 12);
+
+  simulated.cancel(1);
+  REQUIRE(simulated.queue_ahead(2) == 10);
+
+  const PriceCrossSignal trade{1,
+                               200,
+                               205,
+                               2,
+                               PriceCrossSource::Trade,
+                               std::nullopt,
+                               std::nullopt,
+                               100,
+                               0,
+                               0,
+                               Side::Sell,
+                               11};
+  const auto fills = simulated.on_signal(trade);
+  REQUIRE(fills.size() == 1);
+  REQUIRE(fills[0].client_order_id == 2);
+  REQUIRE(fills[0].quantity == 1);
+  REQUIRE(simulated.queue_ahead(2) == 0);
+}
+
+TEST_CASE("Queue-aware matching is conservative without aggressor semantics",
+          "[SimulatedLOB][QueueAware]") {
+  trading::SimulatedLOB simulated(instruments, FillModel::QueueAware);
+  REQUIRE(simulated.accept(1, 1, Side::Buy, 100, 2, 1, nullptr).empty());
+
+  const PriceCrossSignal unknown_side_trade{1,
+                                            200,
+                                            205,
+                                            2,
+                                            PriceCrossSource::Trade,
+                                            std::nullopt,
+                                            std::nullopt,
+                                            100,
+                                            0,
+                                            0,
+                                            Side::None,
+                                            10};
+  REQUIRE(simulated.on_signal(unknown_side_trade).empty());
+  REQUIRE(simulated.queue_ahead(1) == 0);
+}
+
+TEST_CASE("Queue-aware arrival reads displayed quantity from an L2 snapshot",
+          "[SimulatedLOB][QueueAware][L2]") {
+  market::HistoricalLOBStore books;
+  const std::array bids{BookLevel{100, 6}};
+  const std::array asks{BookLevel{101, 4}};
+  books.replace_snapshot(1, bids, asks, 1);
+  trading::SimulatedLOB simulated(instruments, FillModel::QueueAware);
+
+  REQUIRE(
+      simulated.accept_from_store(1, 1, Side::Buy, 100, 2, 1, &books).empty());
+  REQUIRE(simulated.queue_ahead(1) == 6);
+}

@@ -214,6 +214,13 @@ def test_real_submission_delayed_fill_state_and_bulk_results(tmp_path):
         "trigger_source_sequence",
         "trigger_source_id",
         "trigger_global_market_sequence",
+        "reference_price_ticks",
+        "liquidity_role",
+        "slippage_ticks",
+        "fee_micros",
+        "order_submit_ts_ns",
+        "order_arrival_ts_ns",
+        "time_to_fill_ns",
     ]
     assert fills.dtypes.astype(str).tolist() == [
         "int64",
@@ -228,6 +235,13 @@ def test_real_submission_delayed_fill_state_and_bulk_results(tmp_path):
         "uint64",
         "uint32",
         "uint64",
+        "int64",
+        "uint8",
+        "uint32",
+        "int64",
+        "int64",
+        "int64",
+        "int64",
     ]
     assert result.pnl_series.index.dtype == np.dtype("int64")
     assert result.pnl_series.dtype == np.dtype("float64")
@@ -240,6 +254,79 @@ def test_real_submission_delayed_fill_state_and_bulk_results(tmp_path):
     del result, fills
     gc.collect()
     assert retained.tolist() == [6]
+
+
+def test_integrated_slippage_fee_risk_and_analysis(tmp_path):
+    path = write_rows(
+        tmp_path,
+        [
+            row(1, side="B", price="99", size=8, flags=0, order_id=10),
+            row(2, side="A", price="101", size=4, order_id=11),
+        ],
+    )
+
+    class CostAndRisk(bt.Strategy):
+        def __init__(self):
+            super().__init__()
+            self.submitted = False
+            self.snapshot = None
+
+        def on_book_update(self, update):
+            if self.submitted:
+                return
+            self.submitted = True
+            self.submit_limit(update.instrument_id, bt.Side.BUY, 103_000_000_000, 2)
+            self.submit_limit(update.instrument_id, bt.Side.BUY, 103_000_000_000, 4)
+            self.snapshot = self.risk(update.instrument_id)
+
+    strategy = CostAndRisk()
+    result = empty_strategy_run(
+        path,
+        strategy,
+        config=bt.BacktestConfig(
+            order_latency_ns=5,
+            book_depth=1,
+            slippage_model=bt.SlippageModel.FIXED_TICKS,
+            taker_slippage_tick_count=2,
+            taker_fee_micros_per_contract=250_000,
+            max_order_quantity=3,
+            max_abs_position=5,
+            max_open_quantity=5,
+            max_active_orders=2,
+        ),
+        instruments=[
+            bt.InstrumentMeta(
+                instrument_id=1,
+                tick_size_ticks=1_000_000_000,
+                price_scale=1_000_000_000,
+            )
+        ],
+    )
+
+    assert strategy.snapshot.reserved_buy_quantity == 2
+    assert strategy.snapshot.active_orders == 1
+    assert result.fills_df.iloc[0][
+        [
+            "reference_price_ticks",
+            "price_ticks",
+            "liquidity_role",
+            "slippage_ticks",
+            "fee_micros",
+            "time_to_fill_ns",
+        ]
+    ].tolist() == [101_000_000_000, 103_000_000_000, 1, 2, 500_000, 5]
+    assert result.rejects_df["reason"].tolist() == [11]
+    assert result.final_positions_df.iloc[0].to_dict() == {
+        "instrument_id": 1.0,
+        "net_quantity": 2.0,
+        "realized_pnl": -0.5,
+        "unrealized_pnl": -6.0,
+        "total_pnl": -6.5,
+    }
+    report = bt.build_execution_report(result)
+    assert report.rejected_orders == 1
+    assert report.taker_quantity == 2
+    assert report.max_drawdown == 6.5
 
 
 def test_optional_run_summary_is_written_atomically_after_success(tmp_path):
@@ -280,6 +367,15 @@ def test_optional_run_summary_is_written_atomically_after_success(tmp_path):
         "order_latency_ns": 5,
         "book_depth": 1,
         "allow_unverified_metadata": False,
+        "fill_model": "fill_at_touch",
+        "slippage_model": "none",
+        "taker_slippage_tick_count": 0,
+        "maker_fee_micros_per_contract": 0,
+        "taker_fee_micros_per_contract": 0,
+        "max_order_quantity": 2**63 - 1,
+        "max_abs_position": 2**63 - 1,
+        "max_open_quantity": 2**63 - 1,
+        "max_active_orders": 2**32 - 1,
     }
     assert summary["instruments"] == [
         {
@@ -783,6 +879,76 @@ def test_trade_only_empty_book_does_not_emit_initial_depth(tmp_path):
         instruments=metadata(1),
     )
     assert strategy.events == [("trade", 1), ("book", 2)]
+
+
+def test_queue_aware_partial_fills_and_lifecycle_observability(tmp_path):
+    path = write_rows(
+        tmp_path,
+        [
+            row(1, side="B", price="100", size=5, flags=0, order_id=10),
+            row(2, side="A", price="101", size=5, order_id=11),
+            row(
+                3,
+                timestamp="1970-01-01T00:00:00.000000200Z",
+                action="T",
+                side="A",
+                price="100",
+                size=7,
+            ),
+            row(
+                4,
+                timestamp="1970-01-01T00:00:00.000000300Z",
+                action="T",
+                side="A",
+                price="100",
+                size=2,
+            ),
+        ],
+    )
+
+    class QueueStrategy(bt.Strategy):
+        def __init__(self):
+            super().__init__()
+            self.order_id = None
+            self.fills = []
+
+        def on_book_update(self, update):
+            if self.order_id is None:
+                self.order_id = self.submit_limit(
+                    update.instrument_id, bt.Side.BUY, 100_000_000_000, 4
+                )
+
+        def on_fill(self, fill):
+            open_orders = self.open_orders(fill.instrument_id)
+            self.fills.append(
+                (
+                    fill.quantity,
+                    fill.remaining_quantity,
+                    open_orders[0].queue_ahead_quantity if open_orders else None,
+                )
+            )
+
+    strategy = QueueStrategy()
+    result = empty_strategy_run(
+        path,
+        strategy,
+        config=bt.BacktestConfig(
+            order_latency_ns=5,
+            book_depth=1,
+            fill_model=bt.FillModel.QUEUE_AWARE,
+        ),
+        instruments=metadata(1),
+    )
+
+    assert strategy.fills == [(2, 2, 0), (2, 0, None)]
+    assert result.fills_df["quantity"].tolist() == [2, 2]
+    assert result.fills_df["remaining_quantity"].tolist() == [2, 0]
+
+    lifecycle = result.order_log_df
+    assert lifecycle["transition_sequence"].tolist() == [1, 2, 3, 4]
+    assert lifecycle["previous_state"].tolist() == [0, 0, 1, 2]
+    assert lifecycle["state"].tolist() == [0, 1, 2, 3]
+    assert lifecycle["queue_ahead_quantity"].tolist() == [0, 5, 0, 0]
 
 
 @pytest.mark.parametrize("callback", ["book", "trade", "fill", "reject"])

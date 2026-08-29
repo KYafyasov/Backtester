@@ -202,6 +202,10 @@ public:
             std::nullopt,
             std::nullopt,
             event.price_ticks,
+            0,
+            0,
+            event.side,
+            event.quantity,
         });
       } else {
         const auto best_bid = books_.best_bid(event.instrument_id);
@@ -490,7 +494,8 @@ public:
           event_.instrument_id, event_.event_ts_ns, delivery->engine_ts_ns,
           event_.merged_sequence, PriceCrossSource::Trade, std::nullopt,
           std::nullopt, event_.trade_price, delivery->source_id,
-          delivery->global_market_sequence});
+          delivery->global_market_sequence, event_.side,
+          event_.trade_quantity});
     }
 
     scheduled = ScheduledEvent{MarketDelivery{
@@ -544,7 +549,9 @@ void validate(DateRange range, BacktestConfig config,
     throw std::invalid_argument("date range start must not exceed end");
   }
   if (config.market_data_latency_ns < 0 || config.order_latency_ns <= 0 ||
-      config.book_depth == 0) {
+      config.book_depth == 0 ||
+      (config.fill_model != FillModel::FillAtTouch &&
+       config.fill_model != FillModel::QueueAware)) {
     throw std::invalid_argument("market latency must be non-negative, order "
                                 "latency and depth positive");
   }
@@ -677,6 +684,15 @@ results::FrozenResults run_backtest(trading::Strategy &strategy,
           "unverified multi-source metadata requires "
           "allow_unverified_metadata=true");
     }
+    if (config.fill_model == FillModel::QueueAware) {
+      for (const auto &source : multi_manifest->sources) {
+        if (source.l2_metadata.trade_side_semantics !=
+            market::TradeSideSemantics::Aggressor) {
+          throw market::L2CacheError(
+              "queue-aware L2 replay requires aggressor trade-side semantics");
+        }
+      }
+    }
     dataset_metadata.emplace(results::DatasetMetadata{
         multi_manifest->dataset_id, multi_manifest->verified_metadata});
     if (statistics != nullptr) {
@@ -698,6 +714,12 @@ results::FrozenResults run_backtest(trading::Strategy &strategy,
     if (!manifest.verified_metadata && !config.allow_unverified_metadata) {
       throw market::L2CacheError(
           "unverified L2 metadata requires allow_unverified_metadata=true");
+    }
+    if (config.fill_model == FillModel::QueueAware &&
+        manifest.trade_side_semantics !=
+            market::TradeSideSemantics::Aggressor) {
+      throw market::L2CacheError(
+          "queue-aware L2 replay requires aggressor trade-side semantics");
     }
     dataset_metadata.emplace(results::DatasetMetadata{
         manifest.dataset_id, manifest.verified_metadata});

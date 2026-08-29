@@ -20,6 +20,8 @@ public:
 
   [[nodiscard]] std::optional<HistoricalBookLevel> best_bid() const;
   [[nodiscard]] std::optional<HistoricalBookLevel> best_ask() const;
+  [[nodiscard]] std::optional<HistoricalBookLevel>
+  level(Side side, PriceTicks price) const;
   void write_top_bids(std::size_t depth, std::vector<BookLevel> &output) const;
   void write_top_asks(std::size_t depth, std::vector<BookLevel> &output) const;
   [[nodiscard]] Sequence last_book_source_sequence() const noexcept {

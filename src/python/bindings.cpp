@@ -78,6 +78,10 @@ public:
     return {rows.begin(), rows.end()};
   }
 
+  [[nodiscard]] RiskSnapshot risk(InstrumentId instrument_id) const {
+    return context().risk(instrument_id);
+  }
+
   [[nodiscard]] TimestampNs now_ns() const { return context().now_ns(); }
 
   trading::StrategyContext *
@@ -222,6 +226,38 @@ public:
     values["trigger_source_id"] = array(columns.trigger_source_id);
     values["trigger_global_market_sequence"] =
         array(columns.trigger_global_market_sequence);
+    values["reference_price_ticks"] = array(columns.reference_price_ticks);
+    values["liquidity_role"] = enum_array<std::uint8_t>(columns.liquidity_role);
+    values["slippage_ticks"] = array(columns.slippage_ticks);
+    values["fee_micros"] = array(columns.fee_micros);
+    values["order_submit_ts_ns"] = array(columns.order_submit_ts_ns);
+    values["order_arrival_ts_ns"] = array(columns.order_arrival_ts_ns);
+    values["time_to_fill_ns"] = array(columns.time_to_fill_ns);
+    return py::module_::import("pandas").attr("DataFrame")(
+        values, py::arg("copy") = false);
+  }
+
+  [[nodiscard]] py::object rejects_df() const {
+    const auto columns = frozen_->rejects();
+    py::dict values;
+    values["instrument_id"] = array(columns.instrument_id);
+    values["client_order_id"] = array(columns.client_order_id);
+    values["reason"] = enum_array<std::uint8_t>(columns.reason);
+    values["exchange_ts_ns"] = array(columns.exchange_ts_ns);
+    values["engine_ts_ns"] = array(columns.engine_ts_ns);
+    values["sequence"] = array(columns.sequence);
+    return py::module_::import("pandas").attr("DataFrame")(
+        values, py::arg("copy") = false);
+  }
+
+  [[nodiscard]] py::object final_positions_df() const {
+    const auto columns = frozen_->final_positions();
+    py::dict values;
+    values["instrument_id"] = array(columns.instrument_id);
+    values["net_quantity"] = array(columns.net_quantity);
+    values["realized_pnl"] = array(columns.realized_pnl);
+    values["unrealized_pnl"] = array(columns.unrealized_pnl);
+    values["total_pnl"] = array(columns.total_pnl);
     return py::module_::import("pandas").attr("DataFrame")(
         values, py::arg("copy") = false);
   }
@@ -230,15 +266,18 @@ public:
     const auto columns = frozen_->order_log();
     py::dict values;
     values["engine_ts_ns"] = array(columns.engine_ts_ns);
+    values["transition_sequence"] = array(columns.transition_sequence);
     values["instrument_id"] = array(columns.instrument_id);
     values["client_order_id"] = array(columns.client_order_id);
     values["event_type"] = enum_array<std::uint8_t>(columns.event_type);
+    values["previous_state"] = enum_array<std::uint8_t>(columns.previous_state);
     values["state"] = enum_array<std::uint8_t>(columns.state);
     values["side"] = enum_array<std::int8_t>(columns.side);
     values["limit_price_ticks"] = array(columns.limit_price_ticks);
     values["order_quantity"] = array(columns.order_quantity);
     values["filled_quantity"] = array(columns.filled_quantity);
     values["remaining_quantity"] = array(columns.remaining_quantity);
+    values["queue_ahead_quantity"] = array(columns.queue_ahead_quantity);
     values["reject_reason"] = enum_array<std::uint8_t>(columns.reject_reason);
     return py::module_::import("pandas").attr("DataFrame")(
         values, py::arg("copy") = false);
@@ -518,7 +557,20 @@ void write_run_summary(const std::string &summary_path,
        {{"market_data_latency_ns", config.market_data_latency_ns},
         {"order_latency_ns", config.order_latency_ns},
         {"book_depth", config.book_depth},
-        {"allow_unverified_metadata", config.allow_unverified_metadata}}},
+        {"allow_unverified_metadata", config.allow_unverified_metadata},
+        {"fill_model", config.fill_model == FillModel::QueueAware
+                           ? "queue_aware"
+                           : "fill_at_touch"},
+        {"slippage_model", config.slippage_model == SlippageModel::FixedTicks
+                               ? "fixed_ticks"
+                               : "none"},
+        {"taker_slippage_tick_count", config.taker_slippage_tick_count},
+        {"maker_fee_micros_per_contract", config.maker_fee_micros_per_contract},
+        {"taker_fee_micros_per_contract", config.taker_fee_micros_per_contract},
+        {"max_order_quantity", config.max_order_quantity},
+        {"max_abs_position", config.max_abs_position},
+        {"max_open_quantity", config.max_open_quantity},
+        {"max_active_orders", config.max_active_orders}}},
       {"instruments", std::move(instrument_rows)},
       {"source_audit", std::move(source_audit)},
       {"counts", std::move(counts)},
@@ -568,6 +620,15 @@ PYBIND11_MODULE(_backtester, module) {
       .value("HISTORICAL_DISPLAYED", cmf::LiquiditySource::HistoricalDisplayed)
       .value("QUOTE_CROSS", cmf::LiquiditySource::QuoteCross)
       .value("TRADE_CROSS", cmf::LiquiditySource::TradeCross);
+  py::enum_<cmf::FillModel>(module, "FillModel")
+      .value("FILL_AT_TOUCH", cmf::FillModel::FillAtTouch)
+      .value("QUEUE_AWARE", cmf::FillModel::QueueAware);
+  py::enum_<cmf::SlippageModel>(module, "SlippageModel")
+      .value("NONE", cmf::SlippageModel::None)
+      .value("FIXED_TICKS", cmf::SlippageModel::FixedTicks);
+  py::enum_<cmf::LiquidityRole>(module, "LiquidityRole")
+      .value("MAKER", cmf::LiquidityRole::Maker)
+      .value("TAKER", cmf::LiquidityRole::Taker);
   py::enum_<cmf::OrderState>(module, "OrderState")
       .value("PENDING_NEW", cmf::OrderState::PendingNew)
       .value("OPEN", cmf::OrderState::Open)
@@ -589,27 +650,81 @@ PYBIND11_MODULE(_backtester, module) {
       .value("UNSUPPORTED_TIME_IN_FORCE",
              cmf::RejectReason::UnsupportedTimeInForce)
       .value("UNKNOWN_ORDER", cmf::RejectReason::UnknownOrder)
-      .value("ALREADY_TERMINAL", cmf::RejectReason::AlreadyTerminal);
+      .value("ALREADY_TERMINAL", cmf::RejectReason::AlreadyTerminal)
+      .value("RISK_ORDER_SIZE_EXCEEDED",
+             cmf::RejectReason::RiskOrderSizeExceeded)
+      .value("RISK_POSITION_LIMIT_EXCEEDED",
+             cmf::RejectReason::RiskPositionLimitExceeded)
+      .value("RISK_OPEN_QUANTITY_EXCEEDED",
+             cmf::RejectReason::RiskOpenQuantityExceeded)
+      .value("RISK_ACTIVE_ORDER_LIMIT_EXCEEDED",
+             cmf::RejectReason::RiskActiveOrderLimitExceeded);
 
   py::class_<cmf::BacktestConfig>(module, "BacktestConfig")
       .def(py::init([](cmf::TimestampNs market_data_latency_ns,
                        cmf::TimestampNs order_latency_ns,
-                       std::uint32_t book_depth,
-                       bool allow_unverified_metadata) {
+                       std::uint32_t book_depth, bool allow_unverified_metadata,
+                       cmf::FillModel fill_model,
+                       cmf::SlippageModel slippage_model,
+                       std::uint32_t taker_slippage_tick_count,
+                       std::int64_t maker_fee_micros_per_contract,
+                       std::int64_t taker_fee_micros_per_contract,
+                       cmf::Quantity max_order_quantity,
+                       cmf::Quantity max_abs_position,
+                       cmf::Quantity max_open_quantity,
+                       std::uint32_t max_active_orders) {
              return cmf::BacktestConfig{market_data_latency_ns,
-                                        order_latency_ns, book_depth,
-                                        allow_unverified_metadata};
+                                        order_latency_ns,
+                                        book_depth,
+                                        allow_unverified_metadata,
+                                        fill_model,
+                                        slippage_model,
+                                        taker_slippage_tick_count,
+                                        maker_fee_micros_per_contract,
+                                        taker_fee_micros_per_contract,
+                                        max_order_quantity,
+                                        max_abs_position,
+                                        max_open_quantity,
+                                        max_active_orders};
            }),
            py::arg("market_data_latency_ns") = 0,
            py::arg("order_latency_ns") = cmf::runtime::default_order_latency_ns,
            py::arg("book_depth") = 15,
-           py::arg("allow_unverified_metadata") = false)
+           py::arg("allow_unverified_metadata") = false,
+           py::arg("fill_model") = cmf::FillModel::FillAtTouch,
+           py::arg("slippage_model") = cmf::SlippageModel::None,
+           py::arg("taker_slippage_tick_count") = 0,
+           py::arg("maker_fee_micros_per_contract") = 0,
+           py::arg("taker_fee_micros_per_contract") = 0,
+           py::arg("max_order_quantity") =
+               std::numeric_limits<cmf::Quantity>::max(),
+           py::arg("max_abs_position") =
+               std::numeric_limits<cmf::Quantity>::max(),
+           py::arg("max_open_quantity") =
+               std::numeric_limits<cmf::Quantity>::max(),
+           py::arg("max_active_orders") =
+               std::numeric_limits<std::uint32_t>::max())
       .def_readwrite("market_data_latency_ns",
                      &cmf::BacktestConfig::market_data_latency_ns)
       .def_readwrite("order_latency_ns", &cmf::BacktestConfig::order_latency_ns)
       .def_readwrite("book_depth", &cmf::BacktestConfig::book_depth)
       .def_readwrite("allow_unverified_metadata",
-                     &cmf::BacktestConfig::allow_unverified_metadata);
+                     &cmf::BacktestConfig::allow_unverified_metadata)
+      .def_readwrite("fill_model", &cmf::BacktestConfig::fill_model)
+      .def_readwrite("slippage_model", &cmf::BacktestConfig::slippage_model)
+      .def_readwrite("taker_slippage_tick_count",
+                     &cmf::BacktestConfig::taker_slippage_tick_count)
+      .def_readwrite("maker_fee_micros_per_contract",
+                     &cmf::BacktestConfig::maker_fee_micros_per_contract)
+      .def_readwrite("taker_fee_micros_per_contract",
+                     &cmf::BacktestConfig::taker_fee_micros_per_contract)
+      .def_readwrite("max_order_quantity",
+                     &cmf::BacktestConfig::max_order_quantity)
+      .def_readwrite("max_abs_position", &cmf::BacktestConfig::max_abs_position)
+      .def_readwrite("max_open_quantity",
+                     &cmf::BacktestConfig::max_open_quantity)
+      .def_readwrite("max_active_orders",
+                     &cmf::BacktestConfig::max_active_orders);
 
   py::class_<cmf::DateRange>(module, "DateRange")
       .def(py::init<cmf::TimestampNs, cmf::TimestampNs>(),
@@ -671,7 +786,15 @@ PYBIND11_MODULE(_backtester, module) {
                     &cmf::FillView::trigger_source_sequence)
       .def_readonly("trigger_source_id", &cmf::FillView::trigger_source_id)
       .def_readonly("trigger_global_market_sequence",
-                    &cmf::FillView::trigger_global_market_sequence);
+                    &cmf::FillView::trigger_global_market_sequence)
+      .def_readonly("reference_price_ticks",
+                    &cmf::FillView::reference_price_ticks)
+      .def_readonly("liquidity_role", &cmf::FillView::liquidity_role)
+      .def_readonly("slippage_ticks", &cmf::FillView::slippage_ticks)
+      .def_readonly("fee_micros", &cmf::FillView::fee_micros)
+      .def_readonly("order_submit_ts_ns", &cmf::FillView::order_submit_ts_ns)
+      .def_readonly("order_arrival_ts_ns", &cmf::FillView::order_arrival_ts_ns)
+      .def_readonly("time_to_fill_ns", &cmf::FillView::time_to_fill_ns);
   py::class_<cmf::RejectView>(module, "Reject")
       .def_readonly("instrument_id", &cmf::RejectView::instrument_id)
       .def_readonly("client_order_id", &cmf::RejectView::client_order_id)
@@ -686,6 +809,16 @@ PYBIND11_MODULE(_backtester, module) {
                     &cmf::PositionSnapshot::average_open_price_ticks)
       .def_readonly("realized_pnl", &cmf::PositionSnapshot::realized_pnl)
       .def_readonly("unrealized_pnl", &cmf::PositionSnapshot::unrealized_pnl);
+  py::class_<cmf::RiskSnapshot>(module, "RiskSnapshot")
+      .def_readonly("instrument_id", &cmf::RiskSnapshot::instrument_id)
+      .def_readonly("net_position", &cmf::RiskSnapshot::net_position)
+      .def_readonly("reserved_buy_quantity",
+                    &cmf::RiskSnapshot::reserved_buy_quantity)
+      .def_readonly("reserved_sell_quantity",
+                    &cmf::RiskSnapshot::reserved_sell_quantity)
+      .def_readonly("active_orders", &cmf::RiskSnapshot::active_orders)
+      .def_readonly("worst_case_long", &cmf::RiskSnapshot::worst_case_long)
+      .def_readonly("worst_case_short", &cmf::RiskSnapshot::worst_case_short);
   py::class_<cmf::OrderQueryRow>(module, "OpenOrder")
       .def_readonly("instrument_id", &cmf::OrderQueryRow::instrument_id)
       .def_readonly("client_order_id", &cmf::OrderQueryRow::client_order_id)
@@ -695,7 +828,13 @@ PYBIND11_MODULE(_backtester, module) {
       .def_readonly("order_quantity", &cmf::OrderQueryRow::order_quantity)
       .def_readonly("filled_quantity", &cmf::OrderQueryRow::filled_quantity)
       .def_readonly("remaining_quantity",
-                    &cmf::OrderQueryRow::remaining_quantity);
+                    &cmf::OrderQueryRow::remaining_quantity)
+      .def_readonly("queue_ahead_quantity",
+                    &cmf::OrderQueryRow::queue_ahead_quantity)
+      .def_readonly("submit_engine_ts_ns",
+                    &cmf::OrderQueryRow::submit_engine_ts_ns)
+      .def_readonly("exchange_arrival_ts_ns",
+                    &cmf::OrderQueryRow::exchange_arrival_ts_ns);
 
   py::class_<PythonStrategyHandle, std::shared_ptr<PythonStrategyHandle>>(
       module, "Strategy")
@@ -711,12 +850,16 @@ PYBIND11_MODULE(_backtester, module) {
       .def("cancel_order", &PythonStrategyHandle::cancel_order)
       .def("position", &PythonStrategyHandle::position)
       .def("open_orders", &PythonStrategyHandle::open_orders)
+      .def("risk", &PythonStrategyHandle::risk)
       .def_property_readonly("now_ns", &PythonStrategyHandle::now_ns);
 
   py::class_<PythonResult>(module, "Result")
       .def_property_readonly("fills_df", &PythonResult::fills_df)
       .def_property_readonly("order_log_df", &PythonResult::order_log_df)
       .def_property_readonly("pnl_series", &PythonResult::pnl_series)
+      .def_property_readonly("rejects_df", &PythonResult::rejects_df)
+      .def_property_readonly("final_positions_df",
+                             &PythonResult::final_positions_df)
       .def_property_readonly("dataset_id", &PythonResult::dataset_id)
       .def_property_readonly("verified_metadata",
                              &PythonResult::verified_metadata);

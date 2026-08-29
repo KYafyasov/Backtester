@@ -15,9 +15,12 @@ This page is a code-reading index for the implemented system.
 | Scheduled ordering | `src/scheduler/ChronologicalScheduler.*` | `test/SchedulerTest.cpp` |
 | Threading and queues | `SchedulerRuntime.hpp`, `SpscRing.hpp`, `ReadyBarrier.hpp` | `test/SchedulerTest.cpp` |
 | Strategy commands, lifecycle, and positions | `src/trading/TradingEngine.*`, `PositionKeeper.*` | `test/TradingTest.cpp` |
-| Private orders, matching, and synthetic fills | `src/trading/SimulatedLOB.*` | `test/TradingTest.cpp`, `test/TypedSimulatedLOBTest.cpp` |
+| Private orders, touch/queue-aware matching, and synthetic fills | `src/trading/SimulatedLOB.*` | `test/TradingTest.cpp`, `test/TypedSimulatedLOBTest.cpp` |
+| Slippage, maker/taker fees, and effective fill prices | `src/trading/ExecutionCostModel.*` | execution-cost cases in `test/TradingTest.cpp` |
+| Pending-order reservations and pre-trade limits | `src/trading/PreTradeRiskEngine.*` | risk cases in `test/TradingTest.cpp` |
 | Position accounting | `src/trading/PositionKeeper.*` | `test/TradingTest.cpp` |
 | Result columns and PnL | `src/results/ResultRecorder.*` | `test/ResultsTest.cpp` |
+| Execution-quality reporting | `python/back_tester/analysis.py` | `python/tests/test_analysis.py` |
 | Run summary and replay audit | runtime `RunStatistics`, `src/python/bindings.cpp` | summary cases in `python/tests/test_runtime.py`, `python/tests/test_l2_pipeline.py` |
 | Python callbacks and GIL | `src/python/bindings.cpp` | `python/tests/test_runtime.py` |
 | Real two-instrument workflow | `examples/mean_reversion.py` | `python/tests/test_end_to_end.py` |

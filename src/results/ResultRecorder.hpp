@@ -50,6 +50,13 @@ struct FillColumnsView {
   std::span<const Sequence> trigger_source_sequence;
   std::span<const SourceId> trigger_source_id;
   std::span<const Sequence> trigger_global_market_sequence;
+  std::span<const PriceTicks> reference_price_ticks;
+  std::span<const LiquidityRole> liquidity_role;
+  std::span<const std::uint32_t> slippage_ticks;
+  std::span<const std::int64_t> fee_micros;
+  std::span<const TimestampNs> order_submit_ts_ns;
+  std::span<const TimestampNs> order_arrival_ts_ns;
+  std::span<const TimestampNs> time_to_fill_ns;
 
   [[nodiscard]] std::size_t size() const noexcept {
     return exchange_ts_ns.size();
@@ -57,17 +64,47 @@ struct FillColumnsView {
   [[nodiscard]] bool empty() const noexcept { return size() == 0; }
 };
 
+struct RejectColumnsView {
+  std::span<const InstrumentId> instrument_id;
+  std::span<const ClOrdId> client_order_id;
+  std::span<const RejectReason> reason;
+  std::span<const TimestampNs> exchange_ts_ns;
+  std::span<const TimestampNs> engine_ts_ns;
+  std::span<const Sequence> sequence;
+
+  [[nodiscard]] std::size_t size() const noexcept {
+    return instrument_id.size();
+  }
+  [[nodiscard]] bool empty() const noexcept { return size() == 0; }
+};
+
+struct FinalPositionColumnsView {
+  std::span<const InstrumentId> instrument_id;
+  std::span<const Quantity> net_quantity;
+  std::span<const double> realized_pnl;
+  std::span<const double> unrealized_pnl;
+  std::span<const double> total_pnl;
+
+  [[nodiscard]] std::size_t size() const noexcept {
+    return instrument_id.size();
+  }
+  [[nodiscard]] bool empty() const noexcept { return size() == 0; }
+};
+
 struct OrderLogColumnsView {
   std::span<const TimestampNs> engine_ts_ns;
+  std::span<const Sequence> transition_sequence;
   std::span<const InstrumentId> instrument_id;
   std::span<const ClOrdId> client_order_id;
   std::span<const OrderLogEventType> event_type;
+  std::span<const OrderState> previous_state;
   std::span<const OrderState> state;
   std::span<const Side> side;
   std::span<const PriceTicks> limit_price_ticks;
   std::span<const Quantity> order_quantity;
   std::span<const Quantity> filled_quantity;
   std::span<const Quantity> remaining_quantity;
+  std::span<const Quantity> queue_ahead_quantity;
   std::span<const RejectReason> reject_reason;
 
   [[nodiscard]] std::size_t size() const noexcept {
@@ -93,6 +130,8 @@ public:
   [[nodiscard]] FillColumnsView fills() const noexcept;
   [[nodiscard]] OrderLogColumnsView order_log() const noexcept;
   [[nodiscard]] PnlColumnsView pnl() const noexcept;
+  [[nodiscard]] RejectColumnsView rejects() const noexcept;
+  [[nodiscard]] FinalPositionColumnsView final_positions() const noexcept;
   [[nodiscard]] std::span<const AccountCurrencyAmount>
   exact_pnl() const noexcept;
   [[nodiscard]] const std::optional<DatasetMetadata> &
@@ -122,6 +161,7 @@ public:
 
   void on_order_event(const OrderLogResultRow &row) override;
   void on_fill(const FillResultRow &row) override;
+  void on_reject(const RejectView &row) override;
 
   // A missing side is not a valid mark and deliberately leaves the last valid
   // midpoint unchanged. Returns true only when the stored mark changed.

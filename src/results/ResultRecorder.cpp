@@ -134,21 +134,48 @@ public:
     std::vector<Sequence> trigger_source_sequence;
     std::vector<SourceId> trigger_source_id;
     std::vector<Sequence> trigger_global_market_sequence;
+    std::vector<PriceTicks> reference_price_ticks;
+    std::vector<LiquidityRole> liquidity_role;
+    std::vector<std::uint32_t> slippage_ticks;
+    std::vector<std::int64_t> fee_micros;
+    std::vector<TimestampNs> order_submit_ts_ns;
+    std::vector<TimestampNs> order_arrival_ts_ns;
+    std::vector<TimestampNs> time_to_fill_ns;
   } fills;
 
   struct OrderColumns {
     std::vector<TimestampNs> engine_ts_ns;
+    std::vector<Sequence> transition_sequence;
     std::vector<InstrumentId> instrument_id;
     std::vector<ClOrdId> client_order_id;
     std::vector<OrderLogEventType> event_type;
+    std::vector<OrderState> previous_state;
     std::vector<OrderState> state;
     std::vector<Side> side;
     std::vector<PriceTicks> limit_price_ticks;
     std::vector<Quantity> order_quantity;
     std::vector<Quantity> filled_quantity;
     std::vector<Quantity> remaining_quantity;
+    std::vector<Quantity> queue_ahead_quantity;
     std::vector<RejectReason> reject_reason;
   } orders;
+
+  struct RejectColumns {
+    std::vector<InstrumentId> instrument_id;
+    std::vector<ClOrdId> client_order_id;
+    std::vector<RejectReason> reason;
+    std::vector<TimestampNs> exchange_ts_ns;
+    std::vector<TimestampNs> engine_ts_ns;
+    std::vector<Sequence> sequence;
+  } rejects;
+
+  struct FinalPositionColumns {
+    std::vector<InstrumentId> instrument_id;
+    std::vector<Quantity> net_quantity;
+    std::vector<double> realized_pnl;
+    std::vector<double> unrealized_pnl;
+    std::vector<double> total_pnl;
+  } final_positions;
 
   struct PnlColumns {
     std::vector<TimestampNs> engine_ts_ns;
@@ -233,20 +260,30 @@ public:
     c.trigger_source_sequence.reserve(count);
     c.trigger_source_id.reserve(count);
     c.trigger_global_market_sequence.reserve(count);
+    c.reference_price_ticks.reserve(count);
+    c.liquidity_role.reserve(count);
+    c.slippage_ticks.reserve(count);
+    c.fee_micros.reserve(count);
+    c.order_submit_ts_ns.reserve(count);
+    c.order_arrival_ts_ns.reserve(count);
+    c.time_to_fill_ns.reserve(count);
   }
 
   void reserve_orders(std::size_t count) {
     auto &c = storage->orders;
     c.engine_ts_ns.reserve(count);
+    c.transition_sequence.reserve(count);
     c.instrument_id.reserve(count);
     c.client_order_id.reserve(count);
     c.event_type.reserve(count);
+    c.previous_state.reserve(count);
     c.state.reserve(count);
     c.side.reserve(count);
     c.limit_price_ticks.reserve(count);
     c.order_quantity.reserve(count);
     c.filled_quantity.reserve(count);
     c.remaining_quantity.reserve(count);
+    c.queue_ahead_quantity.reserve(count);
     c.reject_reason.reserve(count);
   }
 
@@ -341,7 +378,14 @@ FillColumnsView FrozenResults::fills() const noexcept {
           c.liquidity_source,
           c.trigger_source_sequence,
           c.trigger_source_id,
-          c.trigger_global_market_sequence};
+          c.trigger_global_market_sequence,
+          c.reference_price_ticks,
+          c.liquidity_role,
+          c.slippage_ticks,
+          c.fee_micros,
+          c.order_submit_ts_ns,
+          c.order_arrival_ts_ns,
+          c.time_to_fill_ns};
 }
 
 OrderLogColumnsView FrozenResults::order_log() const noexcept {
@@ -349,10 +393,20 @@ OrderLogColumnsView FrozenResults::order_log() const noexcept {
     return {};
   }
   const auto &c = storage_->orders;
-  return {c.engine_ts_ns,       c.instrument_id,  c.client_order_id,
-          c.event_type,         c.state,          c.side,
-          c.limit_price_ticks,  c.order_quantity, c.filled_quantity,
-          c.remaining_quantity, c.reject_reason};
+  return {c.engine_ts_ns,
+          c.transition_sequence,
+          c.instrument_id,
+          c.client_order_id,
+          c.event_type,
+          c.previous_state,
+          c.state,
+          c.side,
+          c.limit_price_ticks,
+          c.order_quantity,
+          c.filled_quantity,
+          c.remaining_quantity,
+          c.queue_ahead_quantity,
+          c.reject_reason};
 }
 
 PnlColumnsView FrozenResults::pnl() const noexcept {
@@ -360,6 +414,24 @@ PnlColumnsView FrozenResults::pnl() const noexcept {
     return {};
   }
   return {storage_->pnl.engine_ts_ns, storage_->pnl.total_pnl};
+}
+
+RejectColumnsView FrozenResults::rejects() const noexcept {
+  if (!storage_) {
+    return {};
+  }
+  const auto &c = storage_->rejects;
+  return {c.instrument_id,  c.client_order_id, c.reason,
+          c.exchange_ts_ns, c.engine_ts_ns,    c.sequence};
+}
+
+FinalPositionColumnsView FrozenResults::final_positions() const noexcept {
+  if (!storage_) {
+    return {};
+  }
+  const auto &c = storage_->final_positions;
+  return {c.instrument_id, c.net_quantity, c.realized_pnl, c.unrealized_pnl,
+          c.total_pnl};
 }
 
 std::span<const AccountCurrencyAmount>
@@ -386,19 +458,23 @@ ResultRecorder::~ResultRecorder() = default;
 void ResultRecorder::on_order_event(const OrderLogResultRow &row) {
   impl_->ensure_mutable();
   auto &c = impl_->storage->orders;
-  reserve_row(c.engine_ts_ns, c.instrument_id, c.client_order_id, c.event_type,
-              c.state, c.side, c.limit_price_ticks, c.order_quantity,
-              c.filled_quantity, c.remaining_quantity, c.reject_reason);
+  reserve_row(c.engine_ts_ns, c.transition_sequence, c.instrument_id,
+              c.client_order_id, c.event_type, c.previous_state, c.state,
+              c.side, c.limit_price_ticks, c.order_quantity, c.filled_quantity,
+              c.remaining_quantity, c.queue_ahead_quantity, c.reject_reason);
   c.engine_ts_ns.push_back(row.engine_ts_ns);
+  c.transition_sequence.push_back(row.transition_sequence);
   c.instrument_id.push_back(row.instrument_id);
   c.client_order_id.push_back(row.client_order_id);
   c.event_type.push_back(row.event_type);
+  c.previous_state.push_back(row.previous_state);
   c.state.push_back(row.state);
   c.side.push_back(row.side);
   c.limit_price_ticks.push_back(row.limit_price_ticks);
   c.order_quantity.push_back(row.order_quantity);
   c.filled_quantity.push_back(row.filled_quantity);
   c.remaining_quantity.push_back(row.remaining_quantity);
+  c.queue_ahead_quantity.push_back(row.queue_ahead_quantity);
   c.reject_reason.push_back(row.reject_reason);
 }
 
@@ -422,6 +498,9 @@ void ResultRecorder::on_fill(const FillResultRow &row) {
   }
 
   Rational projected_realized = ledger.realized;
+  projected_realized =
+      add(projected_realized,
+          normalize(-static_cast<__int128>(row.fee_micros), 1'000'000));
   __int128 projected_open_cost = ledger.open_signed_price_quantity;
   Quantity remaining = row.quantity;
   std::size_t new_head = ledger.lot_head;
@@ -467,7 +546,9 @@ void ResultRecorder::on_fill(const FillResultRow &row) {
               c.client_order_id, c.side, c.price_ticks, c.quantity,
               c.remaining_quantity, c.liquidity_source,
               c.trigger_source_sequence, c.trigger_source_id,
-              c.trigger_global_market_sequence);
+              c.trigger_global_market_sequence, c.reference_price_ticks,
+              c.liquidity_role, c.slippage_ticks, c.fee_micros,
+              c.order_submit_ts_ns, c.order_arrival_ts_ns, c.time_to_fill_ns);
   impl_->prepare_pnl_append(row.engine_ts_ns);
   const std::size_t old_lot_capacity = ledger.lots.capacity();
   if (append_lot) {
@@ -511,7 +592,29 @@ void ResultRecorder::on_fill(const FillResultRow &row) {
   c.trigger_source_id.push_back(row.trigger_source_id);
   c.trigger_global_market_sequence.push_back(
       row.trigger_global_market_sequence);
+  c.reference_price_ticks.push_back(row.reference_price_ticks == 0
+                                        ? row.price_ticks
+                                        : row.reference_price_ticks);
+  c.liquidity_role.push_back(row.liquidity_role);
+  c.slippage_ticks.push_back(row.slippage_ticks);
+  c.fee_micros.push_back(row.fee_micros);
+  c.order_submit_ts_ns.push_back(row.order_submit_ts_ns);
+  c.order_arrival_ts_ns.push_back(row.order_arrival_ts_ns);
+  c.time_to_fill_ns.push_back(row.time_to_fill_ns);
   impl_->commit_pnl(row.engine_ts_ns, aggregate);
+}
+
+void ResultRecorder::on_reject(const RejectView &row) {
+  impl_->ensure_mutable();
+  auto &c = impl_->storage->rejects;
+  reserve_row(c.instrument_id, c.client_order_id, c.reason, c.exchange_ts_ns,
+              c.engine_ts_ns, c.sequence);
+  c.instrument_id.push_back(row.instrument_id);
+  c.client_order_id.push_back(row.client_order_id);
+  c.reason.push_back(row.reason);
+  c.exchange_ts_ns.push_back(row.exchange_ts_ns);
+  c.engine_ts_ns.push_back(row.engine_ts_ns);
+  c.sequence.push_back(row.sequence);
 }
 
 bool ResultRecorder::on_book_mark(InstrumentId instrument_id,
@@ -580,6 +683,24 @@ FrozenResults ResultRecorder::freeze() {
                         static_cast<double>(amount.denominator));
   }
   impl_->storage->pnl.total_pnl = std::move(converted);
+  auto &positions = impl_->storage->final_positions;
+  positions.instrument_id.reserve(impl_->ledgers.size());
+  positions.net_quantity.reserve(impl_->ledgers.size());
+  positions.realized_pnl.reserve(impl_->ledgers.size());
+  positions.unrealized_pnl.reserve(impl_->ledgers.size());
+  positions.total_pnl.reserve(impl_->ledgers.size());
+  for (const auto &[instrument_id, ledger] : impl_->ledgers) {
+    const Rational total = impl_->instrument_total(ledger);
+    const double realized = static_cast<double>(ledger.realized.numerator) /
+                            static_cast<double>(ledger.realized.denominator);
+    const double total_value = static_cast<double>(total.numerator) /
+                               static_cast<double>(total.denominator);
+    positions.instrument_id.push_back(instrument_id);
+    positions.net_quantity.push_back(ledger.net_quantity);
+    positions.realized_pnl.push_back(realized);
+    positions.unrealized_pnl.push_back(total_value - realized);
+    positions.total_pnl.push_back(total_value);
+  }
   impl_->storage->frozen = true;
   return FrozenResults{impl_->storage};
 }

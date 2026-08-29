@@ -67,6 +67,11 @@ Fill columns preserve local and merged trigger provenance through
 `trigger_global_market_sequence`. Legacy single-source fills retain zero in
 the two added multi-source fields.
 
+Order-log columns preserve a monotonic `transition_sequence`, both
+`previous_state` and resulting `state`, and the queue estimate after the
+transition. This keeps lifecycle reconstruction numeric and columnar without
+introducing per-event strings or file I/O in the trading loop.
+
 ## Native/Python ownership boundary
 
 The results component itself creates no Python, NumPy, pandas, or Arrow

@@ -14,6 +14,8 @@ The `back-tester-tests` executable covers:
 - delayed order/cancel arrival and equal-time priority;
 - quote/trade price crosses, oversized full fills, raw-signal ordering,
   same-instrument isolation, and own price-time priority;
+- queue thresholds, aggressor-side filtering, private FIFO cancellation,
+  partial fills, and lifecycle transition observability;
 - rejects, order transitions, positions, exact PnL, buffer ownership, and
   deterministic repeated runs;
 - complete runtime composition from a temporary JSONL source.
@@ -58,14 +60,14 @@ From the repository root:
 
 ```bash
 uv sync --locked
-uv run pip install -e .
+uv run --no-sync pip install -e .
 uv run python -c "import back_tester; print(back_tester.__file__); print(back_tester.version())"
 uv run cmake -S . -B build-release -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
 uv run cmake --build build-release -j
 uv run ctest --test-dir build-release --output-on-failure
-uv run pytest -q python/tests
-uv run python examples/mean_reversion.py
+uv run --no-sync pytest -q python/tests
+uv run --no-sync python examples/mean_reversion.py
 ```
 
 Benchmarks:
@@ -94,6 +96,8 @@ The test suite locks the following system behavior:
   atomic group;
 - the first qualifying same-instrument signal fills the complete remaining
   quantity at its trigger price, independent of historical size;
+- queue-aware mode waits behind displayed quantity and emits only the partial
+  excess of known-side trade volume;
 - pre-arrival trades are not replayed and later resting fills are
   deterministic;
 - fill results distinguish quote-cross and trade-cross sources and retain the
@@ -111,7 +115,7 @@ The test suite locks the following system behavior:
 ## Runnable demonstration
 
 ```bash
-uv run python examples/mean_reversion.py
+uv run --no-sync python examples/mean_reversion.py
 ```
 
 The example runs the production `backtest.run()` path on

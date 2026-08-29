@@ -13,6 +13,7 @@ import pytest
 from back_tester import (
     BacktestConfig,
     DateRange,
+    FillModel,
     LiquiditySource,
     Side,
     Strategy,
@@ -23,7 +24,12 @@ from back_tester import (
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def convert_fixture(tmp_path: Path, *extra: str, input_dir: Path | None = None) -> Path:
+def convert_fixture(
+    tmp_path: Path,
+    *extra: str,
+    input_dir: Path | None = None,
+    trade_side_semantics: str = "aggressor",
+) -> Path:
     output = tmp_path / "normalized"
     source = input_dir or ROOT / "test" / "data" / "l2_csv"
     command = [
@@ -52,7 +58,7 @@ def convert_fixture(tmp_path: Path, *extra: str, input_dir: Path | None = None) 
         "--contract-multiplier",
         "1",
         "--trade-side-semantics",
-        "aggressor",
+        trade_side_semantics,
         "--same-timestamp-policy",
         "snapshot_first",
         "--depth",
@@ -188,6 +194,23 @@ def test_l2_manifest_replays_through_public_runtime(tmp_path: Path) -> None:
         "full_manifest_replay": True,
         "full_manifest_counts_match": True,
     }
+
+
+def test_queue_aware_l2_rejects_non_aggressor_trade_semantics(
+    tmp_path: Path,
+) -> None:
+    manifest_path = convert_fixture(tmp_path, trade_side_semantics="maker")
+
+    with pytest.raises(
+        RuntimeError,
+        match="queue-aware L2 replay requires aggressor trade-side semantics",
+    ):
+        backtest.run(
+            Strategy(),
+            str(manifest_path),
+            DateRange(),
+            BacktestConfig(fill_model=FillModel.QUEUE_AWARE),
+        )
 
 
 def test_strict_multi_source_manifest_replays_with_global_provenance(

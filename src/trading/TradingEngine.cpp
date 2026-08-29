@@ -22,9 +22,13 @@ TradingEngine::TradingEngine(std::span<const InstrumentMeta> instruments,
                              const market::HistoricalLOBStore &books,
                              Strategy &strategy, Recorder &recorder)
     : config_(config), books_(books), strategy_(strategy), recorder_(recorder),
-      simulated_lob_(instruments) {
+      risk_(instruments, config), simulated_lob_(instruments, config) {
   if (config_.market_data_latency_ns < 0 || config_.order_latency_ns <= 0 ||
-      config_.book_depth == 0) {
+      config_.book_depth == 0 ||
+      (config_.fill_model != FillModel::FillAtTouch &&
+       config_.fill_model != FillModel::QueueAware) ||
+      (config_.slippage_model != SlippageModel::None &&
+       config_.slippage_model != SlippageModel::FixedTicks)) {
     throw std::invalid_argument("invalid backtest configuration");
   }
   instruments_.reserve(instruments.size());
@@ -106,19 +110,25 @@ ClOrdId TradingEngine::submit_limit(InstrumentId instrument_id, Side side,
   const ClOrdId client_order_id = next_client_order_id();
   OwnOrder order{OrderQueryRow{instrument_id, client_order_id,
                                OrderState::PendingNew, side, limit_price_ticks,
-                               quantity, 0, quantity, 0}};
+                               quantity, 0, quantity, 0, 0, now_ns_}};
   const auto [iterator, inserted] = orders_.emplace(client_order_id, order);
   if (!inserted) {
     throw TradingError("generated duplicate client order id");
   }
-  emit_order_event(iterator->second, OrderLogEventType::Submit);
+  emit_order_event(iterator->second, OrderLogEventType::Submit,
+                   OrderState::PendingNew);
 
-  const RejectReason reason =
+  RejectReason reason =
       validate_order(instrument_id, side, limit_price_ticks, quantity);
+  if (reason == RejectReason::None) {
+    reason = risk_.check(instrument_id, side, quantity);
+  }
   if (reason != RejectReason::None) {
     reject_new(iterator->second, reason);
     return client_order_id;
   }
+  risk_.reserve(client_order_id, instrument_id, side, quantity);
+  iterator->second.risk_reserved = true;
   open_order_ids_.at(instrument_id).insert(client_order_id);
 
   const Sequence command_sequence = next_command_sequence();
@@ -154,9 +164,12 @@ bool TradingEngine::cancel_order(ClOrdId client_order_id) {
                 RejectReason::AlreadyTerminal, now_ns_);
     return false;
   }
+  const OrderState previous_state = order.query.state;
+  order.query.queue_ahead_quantity =
+      simulated_lob_.queue_ahead(client_order_id).value_or(0);
   order.cancel_requested = true;
   order.query.state = OrderState::PendingCancel;
-  emit_order_event(order, OrderLogEventType::CancelRequest);
+  emit_order_event(order, OrderLogEventType::CancelRequest, previous_state);
   const Sequence command_sequence = next_command_sequence();
   const CancelCommand command{client_order_id, order.query.instrument_id,
                               now_ns_, delayed_arrival(), command_sequence};
@@ -168,6 +181,10 @@ bool TradingEngine::cancel_order(ClOrdId client_order_id) {
 
 PositionSnapshot TradingEngine::position(InstrumentId instrument_id) const {
   return positions_.position(instrument_id);
+}
+
+RiskSnapshot TradingEngine::risk(InstrumentId instrument_id) const {
+  return risk_.snapshot(instrument_id);
 }
 
 std::span<const OrderQueryRow>
@@ -184,6 +201,9 @@ TradingEngine::open_orders(InstrumentId instrument_id) {
       throw TradingError("open-order index is inconsistent");
     }
     query_buffer_.push_back(order->second.query);
+    query_buffer_.back().queue_ahead_quantity =
+        simulated_lob_.queue_ahead(client_order_id)
+            .value_or(query_buffer_.back().queue_ahead_quantity);
   }
   return query_buffer_;
 }
@@ -269,14 +289,17 @@ void TradingEngine::process_new(const NewOrderCommand &command) {
   }
 
   order.query.exchange_arrival_sequence = command.command_sequence;
+  order.query.exchange_arrival_ts_ns = command.scheduled_arrival_ts_ns;
+  const OrderState previous_state = order.query.state;
   order.query.state = OrderState::Open;
-  emit_order_event(order, OrderLogEventType::Accepted);
-  apply_fills(simulated_lob_.accept_from_store(
-                  order.query.client_order_id, order.query.instrument_id,
-                  order.query.side, order.query.limit_price_ticks,
-                  order.query.remaining_quantity,
-                  order.query.exchange_arrival_sequence, &books_),
-              command.scheduled_arrival_ts_ns);
+  const auto fills = simulated_lob_.accept_from_store(
+      order.query.client_order_id, order.query.instrument_id, order.query.side,
+      order.query.limit_price_ticks, order.query.remaining_quantity,
+      order.query.exchange_arrival_sequence, &books_);
+  order.query.queue_ahead_quantity =
+      simulated_lob_.queue_ahead(order.query.client_order_id).value_or(0);
+  emit_order_event(order, OrderLogEventType::Accepted, previous_state);
+  apply_fills(fills, command.scheduled_arrival_ts_ns);
 }
 
 void TradingEngine::process_cancel(const CancelCommand &command) {
@@ -298,11 +321,17 @@ void TradingEngine::process_cancel(const CancelCommand &command) {
     return;
   }
   simulated_lob_.cancel(order.query.client_order_id);
+  if (order.risk_reserved) {
+    risk_.release(order.query.client_order_id);
+    order.risk_reserved = false;
+  }
+  const OrderState previous_state = order.query.state;
   order.query.state = OrderState::Cancelled;
+  order.query.queue_ahead_quantity = 0;
   order.cancel_requested = false;
   open_order_ids_.at(order.query.instrument_id)
       .erase(order.query.client_order_id);
-  emit_order_event(order, OrderLogEventType::Cancelled);
+  emit_order_event(order, OrderLogEventType::Cancelled, previous_state);
 }
 
 void TradingEngine::apply_fills(std::span<const SyntheticFill> fills,
@@ -312,30 +341,31 @@ void TradingEngine::apply_fills(std::span<const SyntheticFill> fills,
     if (order == orders_.end()) {
       throw TradingError("SimulatedLOB filled unknown private order");
     }
-    apply_fill(order->second, fill.price, fill.quantity, exchange_ts_ns,
-               fill.liquidity_source, fill.trigger_source_sequence,
-               fill.trigger_source_id, fill.trigger_global_market_sequence);
+    order->second.query.queue_ahead_quantity =
+        simulated_lob_.queue_ahead(fill.client_order_id).value_or(0);
+    apply_fill(order->second, fill, exchange_ts_ns);
   }
 }
 
-void TradingEngine::apply_fill(OwnOrder &order, PriceTicks price,
-                               Quantity quantity, TimestampNs exchange_ts_ns,
-                               LiquiditySource liquidity_source,
-                               Sequence trigger_source_sequence,
-                               SourceId trigger_source_id,
-                               Sequence trigger_global_market_sequence) {
+void TradingEngine::apply_fill(OwnOrder &order, const SyntheticFill &execution,
+                               TimestampNs exchange_ts_ns) {
+  const PriceTicks price = execution.price;
+  const Quantity quantity = execution.quantity;
+  const OrderState previous_state = order.query.state;
   order.query.filled_quantity += quantity;
   order.query.remaining_quantity -= quantity;
-  order.query.state = order.query.remaining_quantity == 0
-                          ? OrderState::Filled
-                          : OrderState::PartiallyFilled;
+  order.query.state = order.query.remaining_quantity == 0 ? OrderState::Filled
+                      : order.cancel_requested ? OrderState::PendingCancel
+                                               : OrderState::PartiallyFilled;
   positions_.apply_fill(order.query.instrument_id, order.query.side, price,
-                        quantity);
+                        quantity, execution.fee_micros);
+  risk_.apply_fill(order.query.client_order_id, quantity);
   if (order.query.remaining_quantity == 0) {
+    order.risk_reserved = false;
     open_order_ids_.at(order.query.instrument_id)
         .erase(order.query.client_order_id);
   }
-  emit_order_event(order, OrderLogEventType::Fill);
+  emit_order_event(order, OrderLogEventType::Fill, previous_state);
 
   if (next_fill_sequence_ == std::numeric_limits<Sequence>::max()) {
     throw TradingError("fill sequence exhausted");
@@ -349,33 +379,49 @@ void TradingEngine::apply_fill(OwnOrder &order, PriceTicks price,
                       exchange_ts_ns,
                       now_ns_,
                       ++next_fill_sequence_,
-                      liquidity_source,
-                      trigger_source_sequence,
-                      trigger_source_id,
-                      trigger_global_market_sequence};
-  recorder_.on_fill(
-      FillResultRow{fill.exchange_ts_ns, fill.engine_ts_ns, fill.instrument_id,
-                    fill.client_order_id, fill.side, fill.price, fill.quantity,
-                    fill.remaining_quantity, fill.liquidity_source,
-                    fill.trigger_source_sequence, fill.trigger_source_id,
-                    fill.trigger_global_market_sequence});
+                      execution.liquidity_source,
+                      execution.trigger_source_sequence,
+                      execution.trigger_source_id,
+                      execution.trigger_global_market_sequence,
+                      execution.reference_price_ticks,
+                      execution.liquidity_role,
+                      execution.slippage_ticks,
+                      execution.fee_micros,
+                      order.query.submit_engine_ts_ns,
+                      order.query.exchange_arrival_ts_ns,
+                      now_ns_ - order.query.submit_engine_ts_ns};
+  recorder_.on_fill(FillResultRow{
+      fill.exchange_ts_ns, fill.engine_ts_ns, fill.instrument_id,
+      fill.client_order_id, fill.side, fill.price, fill.quantity,
+      fill.remaining_quantity, fill.liquidity_source,
+      fill.trigger_source_sequence, fill.trigger_source_id,
+      fill.trigger_global_market_sequence, fill.reference_price_ticks,
+      fill.liquidity_role, fill.slippage_ticks, fill.fee_micros,
+      fill.order_submit_ts_ns, fill.order_arrival_ts_ns, fill.time_to_fill_ns});
   invoke_strategy_callback([this, &fill] { strategy_.on_fill(fill, *this); });
 }
 
 void TradingEngine::emit_order_event(const OwnOrder &order,
                                      OrderLogEventType event_type,
+                                     OrderState previous_state,
                                      RejectReason reason) {
+  if (next_transition_sequence_ == std::numeric_limits<Sequence>::max()) {
+    throw TradingError("order transition sequence exhausted");
+  }
   recorder_.on_order_event(OrderLogResultRow{
       now_ns_,
+      ++next_transition_sequence_,
       order.query.instrument_id,
       order.query.client_order_id,
       event_type,
+      previous_state,
       order.query.state,
       order.query.side,
       order.query.limit_price_ticks,
       order.query.order_quantity,
       order.query.filled_quantity,
       order.query.remaining_quantity,
+      order.query.queue_ahead_quantity,
       reason,
   });
 }
@@ -418,12 +464,17 @@ void TradingEngine::drain_deferred_rejects() {
 }
 
 void TradingEngine::reject_new(OwnOrder &order, RejectReason reason) {
+  const OrderState previous_state = order.query.state;
   order.query.state = OrderState::Rejected;
+  if (order.risk_reserved) {
+    risk_.release(order.query.client_order_id);
+    order.risk_reserved = false;
+  }
   const auto indexed = open_order_ids_.find(order.query.instrument_id);
   if (indexed != open_order_ids_.end()) {
     indexed->second.erase(order.query.client_order_id);
   }
-  emit_order_event(order, OrderLogEventType::Reject, reason);
+  emit_order_event(order, OrderLogEventType::Reject, previous_state, reason);
   emit_reject(order.query.instrument_id, order.query.client_order_id, reason,
               now_ns_);
 }

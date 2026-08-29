@@ -39,7 +39,7 @@ void PositionKeeper::register_instrument(const InstrumentMeta &meta) {
     throw std::invalid_argument("instrument metadata values must be positive");
   }
   const auto [iterator, inserted] =
-      positions_.emplace(meta.instrument_id, Position{meta, 0, 0, {}});
+      positions_.emplace(meta.instrument_id, Position{meta, 0, 0, 0, {}});
   (void)iterator;
   if (!inserted) {
     throw std::invalid_argument("duplicate instrument metadata");
@@ -47,7 +47,8 @@ void PositionKeeper::register_instrument(const InstrumentMeta &meta) {
 }
 
 void PositionKeeper::apply_fill(InstrumentId instrument_id, Side side,
-                                PriceTicks price, Quantity quantity) {
+                                PriceTicks price, Quantity quantity,
+                                std::int64_t fee_micros) {
   auto iterator = positions_.find(instrument_id);
   if (iterator == positions_.end()) {
     throw std::invalid_argument("fill references unknown instrument");
@@ -83,6 +84,11 @@ void PositionKeeper::apply_fill(InstrumentId instrument_id, Side side,
                              &validated_net)) {
     throw PositionError("position quantity overflow");
   }
+  std::int64_t validated_fees{};
+  if (__builtin_add_overflow(position.fee_micros, fee_micros,
+                             &validated_fees)) {
+    throw PositionError("position fee overflow");
+  }
 
   Quantity remaining = quantity;
   while (remaining > 0 && !position.lots.empty() &&
@@ -99,6 +105,7 @@ void PositionKeeper::apply_fill(InstrumentId instrument_id, Side side,
     position.lots.push_back(Position::Lot{side, price, remaining});
   }
   position.realized_numerator = validated_realized;
+  position.fee_micros = validated_fees;
   position.net_quantity = validated_net;
 }
 
@@ -118,10 +125,12 @@ PositionSnapshot PositionKeeper::position(InstrumentId instrument_id) const {
   const double average =
       open_quantity == 0 ? 0.0
                          : static_cast<double>(weighted_ticks / open_quantity);
-  return PositionSnapshot{instrument_id, position.net_quantity, average,
-                          static_cast<double>(position.realized_numerator) /
-                              static_cast<double>(position.meta.price_scale),
-                          0.0};
+  return PositionSnapshot{
+      instrument_id, position.net_quantity, average,
+      static_cast<double>(position.realized_numerator) /
+              static_cast<double>(position.meta.price_scale) -
+          static_cast<double>(position.fee_micros) / 1'000'000.0,
+      0.0};
 }
 
 } // namespace cmf::trading

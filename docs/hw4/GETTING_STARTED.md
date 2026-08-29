@@ -26,18 +26,20 @@ All commands below run from the repository root.
 
 ```bash
 uv sync --locked
-uv run pip install -e .
-uv run python -c "import back_tester; print(back_tester.__file__); print(back_tester.version())"
+uv run --no-sync pip install -e .
+uv run --no-sync python -c "import back_tester; print(back_tester.__file__); print(back_tester.version())"
 ```
 
 The editable install compiles the pybind11 extension and exposes the
 `back_tester` import package. A successful import should print a path inside
-the checkout or its editable build and version `0.0.1`.
+the checkout or its editable build and version `0.0.1`. Keep `--no-sync` on
+later uv commands so the freshly built native extension is not replaced by a
+cached locked wheel.
 
 Run the checked-in end-to-end example:
 
 ```bash
-uv run python examples/mean_reversion.py
+uv run --no-sync python examples/mean_reversion.py
 ```
 
 The example replays two instruments, submits delayed orders, produces a fill,
@@ -51,7 +53,7 @@ uv run cmake -S . -B build-release -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
 uv run cmake --build build-release -j
 uv run ctest --test-dir build-release --output-on-failure
-uv run pytest -q python/tests
+uv run --no-sync pytest -q python/tests
 ```
 
 The CTest suite covers native units, runtime integration, and CLI fixtures.
@@ -100,12 +102,44 @@ result = backtest.run(
 )
 ```
 
+For passive FIFO estimation instead of optimistic fill-at-touch matching:
+
+```python
+from back_tester import FillModel
+
+config = BacktestConfig(
+    order_latency_ns=200,
+    fill_model=FillModel.QUEUE_AWARE,
+)
+```
+
+See [`QUEUE_AWARE_EXTENSION.md`](QUEUE_AWARE_EXTENSION.md) for the exact queue
+threshold, aggressor-side requirements, lifecycle logging, and limitations.
+
+Execution costs and pre-trade limits are configured in the same object:
+
+```python
+from back_tester import SlippageModel
+
+config = BacktestConfig(
+    slippage_model=SlippageModel.FIXED_TICKS,
+    taker_slippage_tick_count=2,
+    maker_fee_micros_per_contract=-50,
+    taker_fee_micros_per_contract=250,
+    max_order_quantity=100,
+    max_abs_position=500,
+    max_open_quantity=750,
+    max_active_orders=20,
+)
+```
+
 Inside a callback, a strategy may call:
 
 - `submit_limit(instrument_id, side, price_ticks, quantity)`;
 - `cancel_order(client_order_id)`;
 - `position(instrument_id)`;
 - `open_orders(instrument_id)`;
+- `risk(instrument_id)`;
 - `now_ns`.
 
 These context operations are deliberately unavailable outside an active
@@ -116,7 +150,14 @@ The returned `Result` contains:
 
 - `fills_df`;
 - `order_log_df`;
+- `rejects_df`;
+- `final_positions_df`;
 - `pnl_series`.
+
+Use `build_execution_report(result)` for a compact execution, cost, risk,
+latency, and PnL summary. See
+[`EXECUTION_RISK_ANALYSIS_EXTENSION.md`](EXECUTION_RISK_ANALYSIS_EXTENSION.md)
+for semantics and the presentation demo.
 
 For an auditable run, pass an optional summary path. No log file is created by
 default:
@@ -149,12 +190,14 @@ config = BacktestConfig(
     market_data_latency_ns=50,
     order_latency_ns=200,
     book_depth=15,
+    fill_model=FillModel.QUEUE_AWARE,
 )
 ```
 
 - `market_data_latency_ns` must be non-negative.
 - `order_latency_ns` must be strictly positive.
 - `book_depth` must be strictly positive.
+- `fill_model` is either `FILL_AT_TOUCH` or `QUEUE_AWARE`.
 - Latencies and all public timestamps are integer nanoseconds.
 
 ### Date range
@@ -384,7 +427,7 @@ Run a bounded end-to-end smoke test that submits one order, receives a fill,
 and observes the resulting position through the direct pybind11 integration:
 
 ```bash
-uv run python examples/run_local_l2.py \
+uv run --no-sync python examples/run_local_l2.py \
   --run-summary artifacts/local_l2_run_summary.json
 ```
 
@@ -441,7 +484,7 @@ Run the repository checks before handing off a change:
 ```bash
 uv run pre-commit run --all-files
 uv run ctest --test-dir build-release --output-on-failure
-uv run pytest -q python/tests
+uv run --no-sync pytest -q python/tests
 ```
 
 When changing behavior, update the relevant architecture page, focused native
@@ -454,16 +497,17 @@ For performance work, use the Release-only benchmarks:
 ```bash
 build-release/bin/test/back-tester-scheduler-benchmark
 build-release/bin/test/back-tester-price-cross-benchmark
-uv run python python/benchmarks/callback_overhead.py
-uv run python scripts/benchmark_l2_replay.py PATH_TO_MANIFEST
+uv run --no-sync python python/benchmarks/callback_overhead.py
+uv run --no-sync python scripts/benchmark_l2_replay.py PATH_TO_MANIFEST
 ```
 
 Benchmark values are machine-specific observations, not pass/fail thresholds.
 
 ## 8. Troubleshooting
 
-- `No module named back_tester`: run `uv run pip install -e .` and repeat the
-  import verification from section 2.
+- `No module named back_tester`: run
+  `uv run --no-sync pip install -e .` and repeat the import verification from
+  section 2.
 - C++ compiler not found: install a C++20 compiler and rerun the CMake
   configure command.
 - `cannot open source file`: pass a readable JSONL path or L2 manifest path.

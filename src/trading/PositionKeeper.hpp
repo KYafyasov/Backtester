@@ -18,7 +18,7 @@ class PositionKeeper {
 public:
   void register_instrument(const InstrumentMeta &meta);
   void apply_fill(InstrumentId instrument_id, Side side, PriceTicks price,
-                  Quantity quantity);
+                  Quantity quantity, std::int64_t fee_micros = 0);
   [[nodiscard]] PositionSnapshot position(InstrumentId instrument_id) const;
 
 private:
@@ -32,6 +32,7 @@ private:
     InstrumentMeta meta;
     Quantity net_quantity{};
     std::int64_t realized_numerator{};
+    std::int64_t fee_micros{};
     std::deque<Lot> lots;
   };
 

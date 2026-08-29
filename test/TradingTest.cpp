@@ -1,5 +1,7 @@
 #include "market/HistoricalLOBStore.hpp"
 #include "scheduler/SchedulerRuntime.hpp"
+#include "trading/ExecutionCostModel.hpp"
+#include "trading/PreTradeRiskEngine.hpp"
 #include "trading/TradingEngine.hpp"
 
 #include "MiniTest.hpp"
@@ -127,6 +129,58 @@ TEST_CASE("Trading engine requires causal positive order latency",
     }
     REQUIRE(rejected);
   }
+}
+
+TEST_CASE("Queue-aware fills drive observable partial lifecycle transitions",
+          "[Trading][QueueAware]") {
+  HistoricalLOBStore books;
+  books.apply(market_event(1, 1, 50, MarketAction::Add, Side::Buy, 100, 5));
+
+  SubmitOnFirstMarket strategy;
+  strategy.price = 100;
+  strategy.quantity = 4;
+  RecordingRecorder recorder;
+  TradingEngine engine(instruments,
+                       BacktestConfig{0, 1, 1, false, FillModel::QueueAware},
+                       books, strategy, recorder);
+
+  const auto initial_book = empty_book_view(100, 10);
+  const std::array first_trade{
+      PriceCrossSignal{1, 200, 200, 20, PriceCrossSource::Trade, std::nullopt,
+                       std::nullopt, 100, 0, 0, Side::Sell, 7}};
+  const std::array final_trade{
+      PriceCrossSignal{1, 300, 300, 30, PriceCrossSource::Trade, std::nullopt,
+                       std::nullopt, 100, 0, 0, Side::Sell, 2}};
+  const std::array events{
+      ScheduledEvent{MarketDelivery{1, 100, 100, 10, initial_book, {}, {}}},
+      ScheduledEvent{
+          MarketDelivery{1, 200, 200, 20, std::nullopt, {}, first_trade}},
+      ScheduledEvent{
+          MarketDelivery{1, 300, 300, 30, std::nullopt, {}, final_trade}},
+  };
+  SchedulerRuntime runtime(SchedulerRuntimeConfig{DateRange{}, 1, 8, 16});
+  runtime.run(events, engine);
+
+  REQUIRE(strategy.fills.size() == 2);
+  REQUIRE(strategy.fills[0].quantity == 2);
+  REQUIRE(strategy.fills[0].remaining_quantity == 2);
+  REQUIRE(strategy.fills[1].quantity == 2);
+  REQUIRE(strategy.fills[1].remaining_quantity == 0);
+  REQUIRE(strategy.open_counts_in_fill[0] == 1);
+  REQUIRE(strategy.open_counts_in_fill[1] == 0);
+
+  REQUIRE(recorder.orders.size() == 4);
+  REQUIRE(recorder.orders[0].transition_sequence == 1);
+  REQUIRE(recorder.orders[0].state == OrderState::PendingNew);
+  REQUIRE(recorder.orders[1].previous_state == OrderState::PendingNew);
+  REQUIRE(recorder.orders[1].state == OrderState::Open);
+  REQUIRE(recorder.orders[1].queue_ahead_quantity == 5);
+  REQUIRE(recorder.orders[2].previous_state == OrderState::Open);
+  REQUIRE(recorder.orders[2].state == OrderState::PartiallyFilled);
+  REQUIRE(recorder.orders[2].queue_ahead_quantity == 0);
+  REQUIRE(recorder.orders[3].previous_state == OrderState::PartiallyFilled);
+  REQUIRE(recorder.orders[3].state == OrderState::Filled);
+  REQUIRE(recorder.orders[3].transition_sequence == 4);
 }
 
 TEST_CASE("Delayed order fully fills at best quote without volume cap",
@@ -651,4 +705,93 @@ TEST_CASE("Twenty scripted trading runs are deterministic", "[Trading]") {
       REQUIRE(quantities == baseline_quantities);
     }
   }
+}
+
+TEST_CASE("Execution costs apply bounded adverse slippage and maker rebates",
+          "[Trading][ExecutionCosts]") {
+  const std::array metadata{InstrumentMeta{1, 5, 100, 1}};
+  BacktestConfig config;
+  config.slippage_model = SlippageModel::FixedTicks;
+  config.taker_slippage_tick_count = 3;
+  config.maker_fee_micros_per_contract = -100;
+  config.taker_fee_micros_per_contract = 250;
+  const ExecutionCostModel costs(metadata, config);
+
+  const auto buy =
+      costs.apply(1, Side::Buy, 110, 100, 2, LiquiditySource::QuoteCross);
+  REQUIRE(buy.reference_price_ticks == 100);
+  REQUIRE(buy.fill_price_ticks == 110);
+  REQUIRE(buy.slippage_ticks == 2);
+  REQUIRE(buy.liquidity_role == LiquidityRole::Taker);
+  REQUIRE(buy.fee_micros == 500);
+
+  const auto maker =
+      costs.apply(1, Side::Sell, 95, 100, 2, LiquiditySource::TradeCross);
+  REQUIRE(maker.fill_price_ticks == 100);
+  REQUIRE(maker.slippage_ticks == 0);
+  REQUIRE(maker.liquidity_role == LiquidityRole::Maker);
+  REQUIRE(maker.fee_micros == -200);
+}
+
+TEST_CASE("Pre-trade risk reserves pending exposure and releases it exactly",
+          "[Trading][Risk]") {
+  BacktestConfig config;
+  config.max_order_quantity = 5;
+  config.max_abs_position = 7;
+  config.max_open_quantity = 6;
+  config.max_active_orders = 2;
+  PreTradeRiskEngine risk(instruments, config);
+
+  risk.reserve(1, 1, Side::Buy, 4);
+  auto snapshot = risk.snapshot(1);
+  REQUIRE(snapshot.reserved_buy_quantity == 4);
+  REQUIRE(snapshot.active_orders == 1);
+  REQUIRE(risk.check(1, Side::Buy, 3) ==
+          RejectReason::RiskOpenQuantityExceeded);
+  risk.reserve(2, 1, Side::Buy, 2);
+  REQUIRE(risk.check(1, Side::Sell, 1) ==
+          RejectReason::RiskActiveOrderLimitExceeded);
+
+  risk.apply_fill(1, 2);
+  risk.release(2);
+  snapshot = risk.snapshot(1);
+  REQUIRE(snapshot.net_position == 2);
+  REQUIRE(snapshot.reserved_buy_quantity == 2);
+  REQUIRE(snapshot.active_orders == 1);
+  risk.apply_fill(1, 2);
+  REQUIRE(risk.check(1, Side::Buy, 4) ==
+          RejectReason::RiskPositionLimitExceeded);
+}
+
+TEST_CASE("Trading engine reports risk rejects without scheduling them",
+          "[Trading][Risk]") {
+  struct RiskStrategy final : RecordingStrategy {
+    std::vector<RiskSnapshot> snapshots;
+    void on_book_update(const BookUpdateView &,
+                        StrategyContext &context) override {
+      (void)context.submit_limit(1, Side::Buy, 100, 4);
+      snapshots.push_back(context.risk(1));
+      (void)context.submit_limit(1, Side::Buy, 100, 2);
+      snapshots.push_back(context.risk(1));
+    }
+  } strategy;
+  HistoricalLOBStore books;
+  RecordingRecorder recorder;
+  BacktestConfig config{0, 1, 1};
+  config.max_abs_position = 5;
+  TradingEngine engine(instruments, config, books, strategy, recorder);
+  const auto view = empty_book_view(100, 1);
+  const std::array events{
+      ScheduledEvent{MarketDelivery{1, 100, 100, 1, view, {}, {}}}};
+  SchedulerRuntime runtime(SchedulerRuntimeConfig{DateRange{}, 1, 8, 16});
+  runtime.run(events, engine);
+
+  REQUIRE(strategy.snapshots.size() == 2);
+  REQUIRE(strategy.snapshots[0].reserved_buy_quantity == 4);
+  REQUIRE(strategy.snapshots[1].reserved_buy_quantity == 4);
+  REQUIRE(strategy.rejects.size() == 1);
+  REQUIRE(strategy.rejects[0].reason ==
+          RejectReason::RiskPositionLimitExceeded);
+  REQUIRE(recorder.orders.size() == 4);
+  REQUIRE(recorder.orders[2].event_type == OrderLogEventType::Reject);
 }

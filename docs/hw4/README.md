@@ -13,6 +13,11 @@ backtesting engine delivered for Homework 4.
   API, results, performance, and verification.
 - [`architecture/11_requirements_traceability.md`](architecture/11_requirements_traceability.md)
   maps the written assignment and original diagram to concrete code and tests.
+- [`QUEUE_AWARE_EXTENSION.md`](QUEUE_AWARE_EXTENSION.md) documents the optional
+  risk-averse FIFO model, partial fills, lifecycle observability, and demo.
+- [`EXECUTION_RISK_ANALYSIS_EXTENSION.md`](EXECUTION_RISK_ANALYSIS_EXTENSION.md)
+  documents integrated slippage, fees, pre-trade risk, result analytics, and a
+  suggested 15-minute presentation.
 - [`architecture/12_l2_manifest_cache_validation.md`](architecture/12_l2_manifest_cache_validation.md)
   explains the implemented L2 manifest trust boundary, pre-thread cache-index
   reconciliation, range selection, hash checks, and diagnostic-data policy.

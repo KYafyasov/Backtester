@@ -74,6 +74,8 @@ While applying the group row by row, preparation also materializes an ordered
 - every book-mutating row contributes the best bid/ask visible immediately
   after that row;
 - every trade row contributes its trade price;
+- every trade signal also carries aggressor side and positive quantity for the
+  optional queue-aware matcher;
 - every signal retains the raw source sequence and group timestamps.
 
 The Trading Engine replays that span in raw source order. The first qualifying

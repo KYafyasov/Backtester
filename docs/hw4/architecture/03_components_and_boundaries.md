@@ -183,17 +183,22 @@ Owns strategy-visible mutable state:
 - `TradingEngine` implements `StrategyContext`, command submission, lifecycle
   transitions, position/result application, and callback order.
 - `SimulatedLOB` is the sole synthetic-fill authority; its `EngineView` owns
-  price-time resting indexes and applies ordered quote/trade cross signals.
+  price-time resting indexes and applies ordered quote/trade cross signals or
+  deterministic queue-aware trade-volume thresholds.
 - `PositionKeeper` maintains signed quantity and FIFO realized-PnL inputs.
+- `PreTradeRiskEngine` owns pending-order reservations and worst-case exposure.
+- `ExecutionCostModel` converts reference fills into limit-bounded effective
+  prices and exact maker/taker fees.
 - `Strategy` and `Recorder` are narrow native callback interfaces.
 
 The trading module reads but never mutates `HistoricalLOBStore`.
 
 ### `src/results`
 
-`ResultRecorder` appends typed fill/order/PnL columns, maintains exact
-multiplier-scaled accounting, coalesces equal-time PnL samples, and freezes its
-buffers into reference-counted immutable `FrozenResults`.
+`ResultRecorder` appends typed fill/order/reject/PnL columns, maintains exact
+multiplier-scaled accounting including fees, derives final per-instrument
+positions, coalesces equal-time PnL samples, and freezes its buffers into
+reference-counted immutable `FrozenResults`.
 
 It creates no pandas or Python objects in the native event loop.
 

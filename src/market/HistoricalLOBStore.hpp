@@ -28,6 +28,8 @@ public:
   best_bid(InstrumentId instrument_id) const;
   [[nodiscard]] std::optional<HistoricalBookLevel>
   best_ask(InstrumentId instrument_id) const;
+  [[nodiscard]] std::optional<HistoricalBookLevel>
+  level(InstrumentId instrument_id, Side side, PriceTicks price) const;
   void write_top_bids(InstrumentId instrument_id, std::size_t depth,
                       std::vector<BookLevel> &output) const;
   void write_top_asks(InstrumentId instrument_id, std::size_t depth,

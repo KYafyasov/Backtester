@@ -50,6 +50,8 @@ struct PriceCrossSignal {
   std::optional<PriceTicks> trade_price;
   SourceId source_id{};
   Sequence global_market_sequence{};
+  Side trade_aggressor_side{Side::None};
+  Quantity trade_quantity{};
 };
 
 struct FillView {
@@ -66,6 +68,13 @@ struct FillView {
   Sequence trigger_source_sequence{};
   SourceId trigger_source_id{};
   Sequence trigger_global_market_sequence{};
+  PriceTicks reference_price_ticks{};
+  LiquidityRole liquidity_role{LiquidityRole::Maker};
+  std::uint32_t slippage_ticks{};
+  std::int64_t fee_micros{};
+  TimestampNs order_submit_ts_ns{};
+  TimestampNs order_arrival_ts_ns{};
+  TimestampNs time_to_fill_ns{};
 };
 
 struct RejectView {
@@ -183,6 +192,19 @@ struct OrderQueryRow {
   Quantity filled_quantity{};
   Quantity remaining_quantity{};
   Sequence exchange_arrival_sequence{};
+  Quantity queue_ahead_quantity{};
+  TimestampNs submit_engine_ts_ns{};
+  TimestampNs exchange_arrival_ts_ns{};
+};
+
+struct RiskSnapshot {
+  InstrumentId instrument_id{};
+  Quantity net_position{};
+  Quantity reserved_buy_quantity{};
+  Quantity reserved_sell_quantity{};
+  std::uint32_t active_orders{};
+  Quantity worst_case_long{};
+  Quantity worst_case_short{};
 };
 
 struct PositionSnapshot {

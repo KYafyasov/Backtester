@@ -32,6 +32,8 @@ It is a backtester, not an exchange emulator or a complete options risk system.
 - Top-N Python book callbacks; default depth is 15.
 - Full L3 replay even though Python receives an aggregated top-N view.
 - Full-fill-on-price-cross matching from ordered best-quote and trade signals.
+- Optional deterministic risk-averse FIFO queue estimation with trade-volume
+  partial fills.
 - Per-instrument positions, contract multipliers, FIFO realized PnL, and
   midpoint marking.
 - Native columnar result buffers exposed as pandas DataFrames and a Series.
@@ -104,13 +106,19 @@ future scheduled arrival. It is never matched recursively on the callback's
 C++ stack. Immediate validation rejects are deferred until the initiating
 callback unwinds.
 
-### Infinite-liquidity execution model
+### Fill-at-touch execution model
 
 A qualifying best-quote or trade-price cross fills every eligible own order's
 complete remaining quantity. Historical quote and trade sizes do not cap the
 fill, and synthetic fills never mutate the source historical book. This is an
 explicitly optimistic backtest model: the trader is responsible for choosing
 an order size appropriate for the option instrument's liquidity and turnover.
+
+`FillModel::QueueAware` is an opt-in extension. A passive order joins behind
+displayed same-side quantity and earlier private FIFO quantity at its price.
+Only later trades with a known opposite aggressor side advance the queue;
+historical cancellations do not. Excess traded volume can partially fill an
+order. Quote crosses remain complete immediate fills.
 
 ### Failure policy
 
@@ -126,20 +134,25 @@ corrupted replay.
 PendingNew
   -> Open | Filled | Rejected
 Open
-  -> Filled | PendingCancel
+  -> PartiallyFilled | Filled | PendingCancel
+PartiallyFilled
+  -> PartiallyFilled | Filled | PendingCancel
 PendingCancel
-  -> Filled | Cancelled
+  -> PendingCancel | Filled | Cancelled
 ```
 
 Terminal states are `Filled`, `Cancelled`, and `Rejected`.
-`PartiallyFilled` retains its stable public enum encoding for compatibility but
-is not produced by the full-fill-on-cross matcher.
+`PartiallyFilled` is produced only by the queue-aware matcher. Partial execution
+while a cancel is pending preserves `PendingCancel` until the order fills or
+the cancel arrives.
 
 ## Explicit limitations
 
 - No sockets, IPC, multiple processes, or distributed services.
-- No historical queue-position model, probabilistic fills, or market impact.
-- No quote-size or trade-size capacity constraint on synthetic fills.
+- No exact exchange queue identity for aggregated L2 input, probabilistic
+  queue advancement, or market impact.
+- Fill-at-touch has no quote-size or trade-size capacity constraint; queue-aware
+  mode uses eligible trade volume but still treats a quote cross as complete.
 - No stochastic latency, jitter, or slippage.
 - No replace/amend, market, stop, peg, post-only, IOC, FOK, or multi-leg
   orders.

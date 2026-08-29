@@ -426,6 +426,11 @@ void validate_positive_number(const Json &object, const char *name) {
   }
   const auto side_semantics = manifest_enum(manifest, "trade_side_semantics",
                                             {"aggressor", "maker", "unknown"});
+  if (side_semantics == "aggressor") {
+    metadata.trade_side_semantics = TradeSideSemantics::Aggressor;
+  } else if (side_semantics == "maker") {
+    metadata.trade_side_semantics = TradeSideSemantics::Maker;
+  }
   (void)manifest_enum(manifest, "same_timestamp_policy",
                       {"snapshot_first", "trade_first"});
   (void)manifest_string(manifest, "converter_version");

@@ -1,11 +1,13 @@
 # Documentation manifest
 
-Homework 4 contains 28 Markdown files, including this manifest.
+Homework 4 contains 30 Markdown files, including this manifest.
 
 ## Entry points
 
 - [`README.md`](README.md)
 - [`GETTING_STARTED.md`](GETTING_STARTED.md)
+- [`QUEUE_AWARE_EXTENSION.md`](QUEUE_AWARE_EXTENSION.md)
+- [`EXECUTION_RISK_ANALYSIS_EXTENSION.md`](EXECUTION_RISK_ANALYSIS_EXTENSION.md)
 - [`../../README.md`](../../README.md)
 - [`../../AGENTS.md`](../../AGENTS.md)
 

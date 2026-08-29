@@ -22,9 +22,11 @@ current evidence.
 | Prefetch may not permit N+1 consumption before N completes | One market event may be staged, but book application and publication remain ordered by acknowledgement | `SchedulerRuntime.hpp`, runtime `JsonlScheduledSource` | scheduler prefetch/acknowledgement tests, `test/RuntimeTest.cpp` |
 | `HistoricalLOB + EngineView = SimulatedLOB` | Shared historical L3 store plus `SimulatedLOB`-owned private resting orders; ordered quote/trade signals provide matching triggers | `src/market/`, `src/runtime/BacktestRuntime.cpp`, `src/trading/SimulatedLOB.*` | `test/CoreMarketTest.cpp`, `test/TradingTest.cpp`, `test/TypedSimulatedLOBTest.cpp` |
 | Fill-at-touch matching | The first same-instrument best-quote or trade-price cross fully fills the remaining order at the trigger price, ignoring historical size | `src/core/Events.hpp`, `src/runtime/BacktestRuntime.cpp`, `src/trading/SimulatedLOB.cpp` | oversized quote/trade, pre-arrival, source-order, and limit-protection tests |
+| Queue-aware extension | Optional risk-averse FIFO thresholds wait behind displayed and earlier private quantity; known-side trades create deterministic partial fills | `src/core/BacktestConfig.hpp`, `src/trading/SimulatedLOB.*`, `src/trading/TradingEngine.cpp` | queue cases in `test/TypedSimulatedLOBTest.cpp`, `test/TradingTest.cpp`, and `python/tests/test_runtime.py` |
 | Resting order matching | Uncrossed orders rest in `EngineView` price-time indexes and are reevaluated by later ordered price-cross signals | `src/trading/SimulatedLOB.*` | resting full-fill and FIFO tests in `test/TradingTest.cpp` |
 | Order latency affects fills | Submission creates local `PendingNew`; matching begins only on scheduled new-order arrival | `src/trading/TradingEngine.cpp`, `src/scheduler/SchedulerRuntime.hpp` | delayed-arrival and equal-time market-priority tests |
 | Order Manager / Position Keeper | `TradingEngine` owns lifecycle/open indexes; `PositionKeeper` updates signed positions and FIFO accounting inputs before callbacks | `src/trading/TradingEngine.*`, `PositionKeeper.*` | state, cancel, position, overflow, and callback-observation tests |
+| Lifecycle observability | Native order-log columns preserve stable transition sequence, previous/resulting state, quantities, rejects, and estimated quantity ahead | `src/core/ResultSchemas.hpp`, `src/results/ResultRecorder.*`, `src/python/bindings.cpp` | native result tests, end-to-end schema tests, and queue-aware Python lifecycle test |
 | Strategy queries position and open orders | Multi-instrument callback-scoped Strategy context returns immutable Python values | `src/trading/Strategy.hpp`, `src/python/bindings.cpp` | `python/tests/test_runtime.py`, `python/tests/test_end_to_end.py` |
 | Strategy submits and cancels orders | Python methods call native context; commands enter the delayed scheduler ring without recursive matching | `src/python/bindings.cpp`, `src/trading/TradingEngine.cpp` | Python runtime and end-to-end tests |
 | Choose one packaging workflow and use scikit-build-core | UV lock/sync workflow; scikit-build-core builds the pybind11 extension | `pyproject.toml`, `uv.lock`, `src/python/CMakeLists.txt` | editable install and import commands in root `README.md` |
@@ -60,26 +62,26 @@ component, represented at the boundary, or intentionally outside scope.
 | Order Manager | Lifecycle and open-order indexes are owned by `TradingEngine` | `TradingEngine.*` |
 | Position Keeper | Implemented as a dedicated native component | `PositionKeeper.*` |
 | Gateway Client / Server | Collapsed into the in-process command ring and scheduled command arrivals | `CommandSink`, `SpscRing<OrderCommand>`, `SchedulerRuntime` |
-| Slippage Simulator | No separate authority; fixed latency plus optimistic full-fill-on-cross matching defines execution | scope and matching architecture |
-| Risk Engine | Full risk engine is outside scope; deterministic order/instrument validation is implemented | `TradingEngine::validate_order`, runtime metadata validation |
+| Slippage Simulator | Integrated execution-cost model applies optional adverse fixed-tick taker slippage bounded by the order limit, classifies maker/taker fills, and charges exact fees | `ExecutionCostModel.*`, `SimulatedLOB.*`, execution-cost tests |
+| Risk Engine | Pre-trade engine reserves pending exposure and enforces order-size, worst-case position, open-quantity, and active-order limits | `PreTradeRiskEngine.*`, `TradingEngine.*`, risk tests |
 | Feature Generator | No native feature framework; strategies compute features from callbacks | `examples/mean_reversion.py` |
 | Strategy Logic | Python Strategy methods invoked inside the native trading thread through pybind11 | `src/python/bindings.cpp` |
 | Strategy Parameter Setup | Python construction of Strategy, `BacktestConfig`, `DateRange`, and instrument metadata | public package and example |
 | API | `back_tester.backtest.run()` plus bound Strategy context and Result | `python/back_tester/__init__.py`, bindings |
-| Visualization & Analysis | pandas DataFrames/Series are returned for downstream analysis; no UI framework is bundled | Python `Result` binding |
+| Visualization & Analysis | Frozen pandas views plus `ExecutionReport` and named-run comparison cover execution, cost, latency, rejects, positions, PnL, and drawdown; no UI framework is bundled | Python `Result` binding, `python/back_tester/analysis.py` |
 | API result return path | Native columns freeze after thread join and remain alive through shared NumPy owners | `ResultRecorder.*`, `src/python/bindings.cpp` |
 
 ## Verification commands
 
 ```bash
 uv sync --locked
-uv run pip install -e .
+uv run --no-sync pip install -e .
 uv run cmake -S . -B build-release -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
 uv run cmake --build build-release -j
 uv run ctest --test-dir build-release --output-on-failure
-uv run pytest -q python/tests
-uv run python examples/mean_reversion.py
+uv run --no-sync pytest -q python/tests
+uv run --no-sync python examples/mean_reversion.py
 build-release/bin/test/back-tester-scheduler-benchmark
 build-release/bin/test/back-tester-price-cross-benchmark
 uv run python python/benchmarks/callback_overhead.py

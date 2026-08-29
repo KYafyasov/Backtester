@@ -4,8 +4,10 @@
 #include "core/Events.hpp"
 #include "market/HistoricalLOBStore.hpp"
 #include "market/LimitOrderBook.hpp"
+#include "trading/ExecutionCostModel.hpp"
 
 #include <map>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <unordered_map>
@@ -26,6 +28,10 @@ struct SyntheticFill {
   Sequence trigger_source_sequence{};
   SourceId trigger_source_id{};
   Sequence trigger_global_market_sequence{};
+  PriceTicks reference_price_ticks{};
+  LiquidityRole liquidity_role{LiquidityRole::Maker};
+  std::uint32_t slippage_ticks{};
+  std::int64_t fee_micros{};
 };
 
 // The typed private overlay. It owns only this engine's resting orders; the
@@ -56,7 +62,9 @@ private:
     Side side{Side::None};
     PriceTicks limit_price{};
     Quantity remaining_quantity{};
+    Quantity initial_quantity{};
     Sequence arrival_sequence{};
+    Quantity queue_threshold{};
   };
   struct InstrumentOrders {
     std::map<RestingKey, ClOrdId, BuyFirst> buys;
@@ -71,7 +79,10 @@ private:
 // lifecycle events and applies the returned decisions to state and callbacks.
 class SimulatedLOB {
 public:
-  explicit SimulatedLOB(std::span<const InstrumentMeta> instruments);
+  explicit SimulatedLOB(std::span<const InstrumentMeta> instruments,
+                        FillModel fill_model = FillModel::FillAtTouch);
+  SimulatedLOB(std::span<const InstrumentMeta> instruments,
+               const BacktestConfig &config);
 
   // Returned spans alias this SimulatedLOB's internal fill buffer. Their
   // elements remain valid only until the next accept() or on_signal() call on
@@ -94,6 +105,9 @@ public:
 
   void cancel(ClOrdId client_order_id);
 
+  [[nodiscard]] std::optional<Quantity>
+  queue_ahead(ClOrdId client_order_id) const;
+
   [[nodiscard]] const EngineView &engine_view() const noexcept { return view_; }
 
 private:
@@ -104,15 +118,36 @@ private:
                     Sequence trigger_source_sequence,
                     SourceId trigger_source_id = 0,
                     Sequence trigger_global_market_sequence = 0);
+  void match_queue_trade(const PriceCrossSignal &signal);
   void insert_resting(const EngineView::PrivateOrder &order);
   void erase_resting(const EngineView::PrivateOrder &order);
+  void release_cancelled_queue(const EngineView::PrivateOrder &order);
   [[nodiscard]] std::span<const SyntheticFill> accept_with_touch(
       ClOrdId client_order_id, InstrumentId instrument_id, Side side,
       PriceTicks limit_price, Quantity remaining_quantity,
       Sequence arrival_sequence, std::optional<PriceTicks> best_bid,
-      std::optional<PriceTicks> best_ask, Sequence source_sequence);
+      std::optional<PriceTicks> best_ask,
+      std::optional<Quantity> same_side_quantity, Sequence source_sequence);
+
+  struct QueueKey {
+    InstrumentId instrument_id{};
+    Side side{Side::None};
+    PriceTicks price{};
+
+    [[nodiscard]] bool operator<(const QueueKey &other) const noexcept {
+      return std::tuple{instrument_id, side, price} <
+             std::tuple{other.instrument_id, other.side, other.price};
+    }
+  };
+
+  [[nodiscard]] Quantity executed_volume(const QueueKey &key) const noexcept;
+  [[nodiscard]] Quantity
+  queue_ahead_quantity(const EngineView::PrivateOrder &order) const noexcept;
 
   EngineView view_;
+  FillModel fill_model_;
+  ExecutionCostModel execution_costs_;
+  std::map<QueueKey, Quantity> executed_volume_;
   std::vector<SyntheticFill> fills_;
 };
 

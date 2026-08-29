@@ -57,15 +57,23 @@ All enum result columns store the enum's fixed-width underlying value:
 |---|---|---|
 | `Side` | `int8` | `Sell=-1`, `None=0`, `Buy=1` |
 | `OrderState` | `uint8` | `PendingNew=0`, `Open=1`, `PartiallyFilled=2`, `Filled=3`, `PendingCancel=4`, `Cancelled=5`, `Rejected=6` |
-| `RejectReason` | `uint8` | `None=0`, `UnknownInstrument=1`, `InvalidSide=2`, `NonPositiveQuantity=3`, `InvalidPrice=4`, `TickMisalignment=5`, `DuplicateClientOrderId=6`, `UnsupportedOrderType=7`, `UnsupportedTimeInForce=8`, `UnknownOrder=9`, `AlreadyTerminal=10` |
+| `RejectReason` | `uint8` | `None=0`, `UnknownInstrument=1`, `InvalidSide=2`, `NonPositiveQuantity=3`, `InvalidPrice=4`, `TickMisalignment=5`, `DuplicateClientOrderId=6`, `UnsupportedOrderType=7`, `UnsupportedTimeInForce=8`, `UnknownOrder=9`, `AlreadyTerminal=10`, `RiskOrderSizeExceeded=11`, `RiskPositionLimitExceeded=12`, `RiskOpenQuantityExceeded=13`, `RiskActiveOrderLimitExceeded=14` |
 | `EventPriority` | `uint8` | `MarketData=0`, `NewOrder=1`, `Cancel=2` |
 | `CommandType` | `uint8` | `NewOrder=0`, `Cancel=1` |
 | `OrderLogEventType` | `uint8` | `Submit=0`, `Accepted=1`, `Fill=2`, `CancelRequest=3`, `Cancelled=4`, `Reject=5` |
 | `LiquiditySource` | `uint8` | `HistoricalDisplayed=0`, `QuoteCross=1`, `TradeCross=2` |
 | `PriceCrossSource` | `uint8` | `BestQuote=0`, `Trade=1` |
+| `FillModel` | `uint8` | `FillAtTouch=0`, `QueueAware=1` |
+| `SlippageModel` | `uint8` | `None=0`, `FixedTicks=1` |
+| `LiquidityRole` | `uint8` | `Maker=0`, `Taker=1` |
 
 These encodings are public serialization/result contracts. Additions or changes
 require the decision-change process.
+
+`PriceCrossSignal` additionally carries trade aggressor side and quantity.
+Fill-at-touch ignores those fields; queue-aware mode requires positive quantity
+and a known aggressor before advancing a passive FIFO threshold. Queue-aware L2
+replay rejects manifests whose `trade_side_semantics` is not `aggressor`.
 
 ## 4. Scheduled payload and callback contract
 

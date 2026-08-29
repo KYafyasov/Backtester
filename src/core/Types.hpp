@@ -69,6 +69,10 @@ enum class RejectReason : std::uint8_t {
   UnsupportedTimeInForce = 8,
   UnknownOrder = 9,
   AlreadyTerminal = 10,
+  RiskOrderSizeExceeded = 11,
+  RiskPositionLimitExceeded = 12,
+  RiskOpenQuantityExceeded = 13,
+  RiskActiveOrderLimitExceeded = 14,
 };
 
 enum class EventPriority : std::uint8_t {
@@ -100,6 +104,24 @@ enum class LiquiditySource : std::uint8_t {
 enum class PriceCrossSource : std::uint8_t {
   BestQuote = 0,
   Trade = 1,
+};
+
+// FillAtTouch preserves the optimistic Homework 4 baseline. QueueAware adds a
+// deterministic risk-averse FIFO estimate: displayed same-side quantity is
+// ahead at order arrival and only subsequent trades advance that queue.
+enum class FillModel : std::uint8_t {
+  FillAtTouch = 0,
+  QueueAware = 1,
+};
+
+enum class SlippageModel : std::uint8_t {
+  None = 0,
+  FixedTicks = 1,
+};
+
+enum class LiquidityRole : std::uint8_t {
+  Maker = 0,
+  Taker = 1,
 };
 
 } // namespace cmf

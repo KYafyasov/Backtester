@@ -9,6 +9,7 @@ The distribution name is `back-tester-cmf`; the import package is
 from back_tester import (
     BacktestConfig,
     DateRange,
+    FillModel,
     InstrumentMeta,
     Side,
     Strategy,
@@ -35,6 +36,7 @@ result = backtest.run(
         market_data_latency_ns=0,
         order_latency_ns=1,
         book_depth=15,
+        fill_model=FillModel.QUEUE_AWARE,
     ),
     [
         InstrumentMeta(
@@ -130,21 +132,31 @@ run concurrently. A new run remains possible after a failed run.
 | `trigger_source_sequence` | `uint64` |
 | `trigger_source_id` | `uint32` |
 | `trigger_global_market_sequence` | `uint64` |
+| `reference_price_ticks` | `int64` |
+| `liquidity_role` | `uint8` |
+| `slippage_ticks` | `uint32` |
+| `fee_micros` | `int64` |
+| `order_submit_ts_ns` | `int64` |
+| `order_arrival_ts_ns` | `int64` |
+| `time_to_fill_ns` | `int64` |
 
 ### `order_log_df`
 
 | Column | dtype / meaning |
 |---|---|
 | `engine_ts_ns` | `int64` callback-visible time |
+| `transition_sequence` | `uint64` stable run-wide lifecycle order |
 | `instrument_id` | `int64` |
 | `client_order_id` | `uint64` |
 | `event_type` | `uint8` stable enum encoding |
+| `previous_state` | `uint8` state before the transition |
 | `state` | `uint8` resulting state |
 | `side` | `int8` |
 | `limit_price_ticks` | `int64` |
 | `order_quantity` | `int64` |
 | `filled_quantity` | `int64` cumulative fill |
 | `remaining_quantity` | `int64` |
+| `queue_ahead_quantity` | `int64` estimated FIFO quantity ahead |
 | `reject_reason` | `uint8` stable enum encoding |
 
 ### `pnl_series`
@@ -161,6 +173,13 @@ run concurrently. A new run remains possible after a failed run.
 Realized accounting closes FIFO lots. Native arithmetic preserves an exact
 rational numerator/denominator and checks overflow before conversion to
 `float64`.
+
+### Additional analysis views
+
+`rejects_df` records all typed rejects. `final_positions_df` provides net
+quantity and realized/unrealized/total PnL by instrument. The pure-Python
+`build_execution_report()` and `compare_results()` functions derive stable
+execution-quality tables from frozen results without rerunning the engine.
 
 ## NumPy/pandas ownership
 

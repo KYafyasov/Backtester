@@ -25,6 +25,7 @@ public:
   position(InstrumentId instrument_id) const = 0;
   [[nodiscard]] virtual std::span<const OrderQueryRow>
   open_orders(InstrumentId instrument_id) = 0;
+  [[nodiscard]] virtual RiskSnapshot risk(InstrumentId instrument_id) const = 0;
 };
 
 class Strategy {

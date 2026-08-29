@@ -22,6 +22,12 @@ enum class L2EventKind : std::uint8_t {
   Trade = 2,
 };
 
+enum class TradeSideSemantics : std::uint8_t {
+  Unknown = 0,
+  Aggressor = 1,
+  Maker = 2,
+};
+
 struct L2InputEvent {
   L2EventKind kind{L2EventKind::Snapshot};
   InstrumentId instrument_id{};
@@ -39,6 +45,7 @@ struct L2DatasetMetadata {
   InstrumentMeta instrument;
   std::string dataset_id;
   TimestampSemantics timestamp_semantics{TimestampSemantics::Unknown};
+  TradeSideSemantics trade_side_semantics{TradeSideSemantics::Unknown};
   bool verified_metadata{};
   std::uint64_t total_rows{};
   std::uint64_t snapshot_rows{};

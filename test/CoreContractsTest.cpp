@@ -85,6 +85,10 @@ static_assert(encoded(RejectReason::UnsupportedOrderType) == 7);
 static_assert(encoded(RejectReason::UnsupportedTimeInForce) == 8);
 static_assert(encoded(RejectReason::UnknownOrder) == 9);
 static_assert(encoded(RejectReason::AlreadyTerminal) == 10);
+static_assert(encoded(RejectReason::RiskOrderSizeExceeded) == 11);
+static_assert(encoded(RejectReason::RiskPositionLimitExceeded) == 12);
+static_assert(encoded(RejectReason::RiskOpenQuantityExceeded) == 13);
+static_assert(encoded(RejectReason::RiskActiveOrderLimitExceeded) == 14);
 static_assert(encoded(EventPriority::MarketData) == 0);
 static_assert(encoded(EventPriority::NewOrder) == 1);
 static_assert(encoded(EventPriority::Cancel) == 2);
@@ -101,6 +105,12 @@ static_assert(encoded(LiquiditySource::QuoteCross) == 1);
 static_assert(encoded(LiquiditySource::TradeCross) == 2);
 static_assert(encoded(PriceCrossSource::BestQuote) == 0);
 static_assert(encoded(PriceCrossSource::Trade) == 1);
+static_assert(encoded(FillModel::FillAtTouch) == 0);
+static_assert(encoded(FillModel::QueueAware) == 1);
+static_assert(encoded(SlippageModel::None) == 0);
+static_assert(encoded(SlippageModel::FixedTicks) == 1);
+static_assert(encoded(LiquidityRole::Maker) == 0);
+static_assert(encoded(LiquidityRole::Taker) == 1);
 
 static_assert(std::is_trivially_copyable_v<BookLevel>);
 static_assert(std::is_trivially_copyable_v<AccountCurrencyAmount>);
@@ -115,6 +125,7 @@ static_assert(std::is_trivially_copyable_v<MarketDelivery>);
 static_assert(std::is_trivially_copyable_v<ScheduledKey>);
 static_assert(std::is_trivially_copyable_v<ScheduledEvent>);
 static_assert(std::is_trivially_copyable_v<OrderQueryRow>);
+static_assert(std::is_trivially_copyable_v<RiskSnapshot>);
 static_assert(std::is_trivially_copyable_v<PositionSnapshot>);
 static_assert(std::is_trivially_copyable_v<FillResultRow>);
 static_assert(std::is_trivially_copyable_v<OrderLogResultRow>);
@@ -136,6 +147,7 @@ static_assert(!std::is_constructible_v<ScheduledEvent, ScheduledEvent::Payload,
 static_assert(std::is_aggregate_v<FillResultRow>);
 static_assert(std::is_aggregate_v<OrderLogResultRow>);
 static_assert(std::is_aggregate_v<PnlPoint>);
+static_assert(std::is_aggregate_v<FinalPositionRow>);
 
 static_assert(
     std::is_same_v<decltype(FillResultRow::exchange_ts_ns), TimestampNs>);
@@ -158,11 +170,15 @@ static_assert(
 static_assert(
     std::is_same_v<decltype(OrderLogResultRow::engine_ts_ns), TimestampNs>);
 static_assert(
+    std::is_same_v<decltype(OrderLogResultRow::transition_sequence), Sequence>);
+static_assert(
     std::is_same_v<decltype(OrderLogResultRow::instrument_id), InstrumentId>);
 static_assert(
     std::is_same_v<decltype(OrderLogResultRow::client_order_id), ClOrdId>);
 static_assert(
     std::is_same_v<decltype(OrderLogResultRow::event_type), OrderLogEventType>);
+static_assert(
+    std::is_same_v<decltype(OrderLogResultRow::previous_state), OrderState>);
 static_assert(std::is_same_v<decltype(OrderLogResultRow::state), OrderState>);
 static_assert(std::is_same_v<decltype(OrderLogResultRow::side), Side>);
 static_assert(
@@ -173,6 +189,8 @@ static_assert(
     std::is_same_v<decltype(OrderLogResultRow::filled_quantity), Quantity>);
 static_assert(
     std::is_same_v<decltype(OrderLogResultRow::remaining_quantity), Quantity>);
+static_assert(std::is_same_v<decltype(OrderLogResultRow::queue_ahead_quantity),
+                             Quantity>);
 static_assert(
     std::is_same_v<decltype(OrderLogResultRow::reject_reason), RejectReason>);
 
@@ -186,6 +204,7 @@ TEST_CASE("Core contracts - config and date policies", "[CoreContracts]") {
   REQUIRE(config.market_data_latency_ns == 0);
   REQUIRE(config.order_latency_ns == 0);
   REQUIRE(config.book_depth == 15);
+  REQUIRE(config.fill_model == FillModel::FillAtTouch);
 
   const InstrumentMeta default_instrument;
   REQUIRE(default_instrument.tick_size_ticks == 1);
@@ -384,15 +403,18 @@ TEST_CASE("Core contracts - remaining value aggregates", "[CoreContracts]") {
       2,     3,         LiquiditySource::HistoricalDisplayed,
       72};
   const OrderLogResultRow order_log{1'075,
+                                    1,
                                     7,
                                     41,
                                     OrderLogEventType::Fill,
+                                    OrderState::Open,
                                     OrderState::PartiallyFilled,
                                     Side::Buy,
                                     101,
                                     5,
                                     2,
                                     3,
+                                    0,
                                     RejectReason::None};
   const PnlPoint pnl{1'075, 4.0};
 

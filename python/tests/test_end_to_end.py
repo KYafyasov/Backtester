@@ -25,18 +25,28 @@ FILL_COLUMNS = [
     "trigger_source_sequence",
     "trigger_source_id",
     "trigger_global_market_sequence",
+    "reference_price_ticks",
+    "liquidity_role",
+    "slippage_ticks",
+    "fee_micros",
+    "order_submit_ts_ns",
+    "order_arrival_ts_ns",
+    "time_to_fill_ns",
 ]
 ORDER_COLUMNS = [
     "engine_ts_ns",
+    "transition_sequence",
     "instrument_id",
     "client_order_id",
     "event_type",
+    "previous_state",
     "state",
     "side",
     "limit_price_ticks",
     "order_quantity",
     "filled_quantity",
     "remaining_quantity",
+    "queue_ahead_quantity",
     "reject_reason",
 ]
 DATA_PATH = Path(__file__).resolve().parents[2] / "test/data/m5_two_instrument.jsonl"
@@ -88,6 +98,13 @@ def test_two_instrument_runtime_contract_and_results():
         "uint64",
         "uint32",
         "uint64",
+        "int64",
+        "uint8",
+        "uint32",
+        "int64",
+        "int64",
+        "int64",
+        "int64",
     ]
     assert fills.iloc[0].to_dict() == {
         "exchange_ts_ns": 200,
@@ -102,16 +119,26 @@ def test_two_instrument_runtime_contract_and_results():
         "trigger_source_sequence": 6,
         "trigger_source_id": 0,
         "trigger_global_market_sequence": 0,
+        "reference_price_ticks": 101_000_000_000,
+        "liquidity_role": 1,
+        "slippage_ticks": 0,
+        "fee_micros": 0,
+        "order_submit_ts_ns": 100,
+        "order_arrival_ts_ns": 105,
+        "time_to_fill_ns": 100,
     }
 
     assert list(orders.columns) == ORDER_COLUMNS
     assert orders.dtypes.astype(str).tolist() == [
         "int64",
+        "uint64",
         "int64",
         "uint64",
         "uint8",
         "uint8",
+        "uint8",
         "int8",
+        "int64",
         "int64",
         "int64",
         "int64",
@@ -121,11 +148,13 @@ def test_two_instrument_runtime_contract_and_results():
     first = orders[orders["client_order_id"] == 1]
     assert first["engine_ts_ns"].tolist() == [100, 105, 200]
     assert first["event_type"].tolist() == [0, 1, 2]
+    assert first["previous_state"].tolist() == [0, 0, 1]
     assert first["state"].tolist() == [0, 1, 3]
     assert first["remaining_quantity"].tolist() == [2, 2, 0]
     second = orders[orders["client_order_id"] == 2]
     assert second["engine_ts_ns"].tolist() == [110, 115, 150, 155]
     assert second["event_type"].tolist() == [0, 1, 3, 4]
+    assert second["previous_state"].tolist() == [0, 0, 1, 4]
     assert second["state"].tolist() == [0, 1, 4, 5]
     assert second["remaining_quantity"].tolist() == [1, 1, 1, 1]
 

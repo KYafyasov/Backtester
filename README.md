@@ -14,12 +14,13 @@ L2 CSV -> Parquet + native cache -> historical L2 books -> scheduler
 
 The runtime is deterministic and multi-instrument. It uses one dispatcher
 thread, one trading thread, fixed market-data/order latency, an atomic processed
-sequence barrier, full-fill-on-price-cross matching, and bulk
+sequence barrier, selectable fill-at-touch or queue-aware matching, and bulk
 NumPy/pandas result hand-off.
 
 - [New contributor guide](docs/hw4/GETTING_STARTED.md)
 - [Architecture overview](docs/hw4/architecture/README.md)
 - [Assignment-to-code traceability](docs/hw4/architecture/11_requirements_traceability.md)
+- [Queue-aware extension](docs/hw4/QUEUE_AWARE_EXTENSION.md)
 - [Homework 4 source requirements](docs/hw4/source/01_homework_4_assignment.md)
 
 ## Prerequisites
@@ -38,12 +39,14 @@ Create the locked environment and build the editable native Python extension:
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync --locked
-uv run pip install -e .
-uv run python -c "import back_tester; print(back_tester.__file__); print(back_tester.version())"
+uv run --no-sync pip install -e .
+uv run --no-sync python -c "import back_tester; print(back_tester.__file__); print(back_tester.version())"
 ```
 
 The distribution name is `back-tester-cmf`. Its import package is
-`back_tester`, which loads `back_tester._backtester`.
+`back_tester`, which loads `back_tester._backtester`. Keep `--no-sync` on
+commands after the editable install so uv does not replace the freshly built
+native extension with a cached locked wheel.
 
 ## Python strategy API
 
@@ -75,7 +78,9 @@ explicit `instruments=[InstrumentMeta(...)]` list for a one-pass replay and
 real tick sizes or option multipliers.
 
 The optional `BacktestConfig` defaults to zero market-data latency, a strictly
-positive one-nanosecond order latency, and top-15 callbacks. Strategy context
+positive one-nanosecond order latency, top-15 callbacks, and the Homework 4
+fill-at-touch model. Set `fill_model=FillModel.QUEUE_AWARE` to join behind
+displayed same-side quantity and allow trade-volume-driven partial fills. Strategy context
 methods are intentionally available only while a callback is active. Result
 DataFrames and the PnL Series are built in bulk from frozen typed native
 columns; callback-scoped book levels are copied into immutable Python-owned
@@ -86,11 +91,21 @@ payloads.
 Run the checked-in two-instrument mean-reversion example after installation:
 
 ```bash
-uv run python examples/mean_reversion.py
+uv run --no-sync python examples/mean_reversion.py
 ```
 
 It exercises the real `backtest.run` path, including a delayed resting fill,
 an independent cancelled order, callback ordering, positions, and PnL.
+
+Run the queue-aware extension demonstration with:
+
+```bash
+uv run --no-sync python examples/queue_aware.py
+uv run --no-sync python examples/execution_quality.py
+```
+
+It prints the deterministic `PendingNew -> Open -> PartiallyFilled -> Filled`
+lifecycle together with the estimated quantity ahead at every transition.
 
 ## Prepare and replay an L2 dataset
 
@@ -259,13 +274,13 @@ run the complete Release and Python suites:
 
 ```bash
 uv sync --locked
-uv run pip install -e .
+uv run --no-sync pip install -e .
 uv run python -c "import back_tester; print(back_tester.__file__); print(back_tester.version())"
 uv run cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
 uv run cmake --build build-release -j
 uv run ctest --test-dir build-release --output-on-failure
-uv run pytest -q python/tests
-uv run python examples/mean_reversion.py
+uv run --no-sync pytest -q python/tests
+uv run --no-sync python examples/mean_reversion.py
 ```
 
 Run the required benchmarks only from that Release setup:

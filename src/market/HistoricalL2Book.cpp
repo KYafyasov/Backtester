@@ -71,6 +71,21 @@ std::optional<HistoricalBookLevel> HistoricalL2Book::best_ask() const {
                              revision_};
 }
 
+std::optional<HistoricalBookLevel>
+HistoricalL2Book::level(Side side, PriceTicks price) const {
+  const auto &levels = side == Side::Buy ? bids_ : asks_;
+  if (side != Side::Buy && side != Side::Sell) {
+    throw BookError("cannot query an L2 level for Side::None");
+  }
+  const auto iterator = std::find_if(
+      levels.begin(), levels.end(),
+      [price](const BookLevel &level) { return level.price == price; });
+  if (iterator == levels.end()) {
+    return std::nullopt;
+  }
+  return HistoricalBookLevel{iterator->price, iterator->quantity, revision_};
+}
+
 void HistoricalL2Book::write_top_bids(std::size_t depth,
                                       std::vector<BookLevel> &output) const {
   write_top(bids_, depth, output);
